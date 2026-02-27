@@ -2437,6 +2437,7 @@ function CRMPage({db}){
   const {customers,templates,sc,toast_}=db;
   const [addM,setAdd]=useState(false); const [editId,setEdit]=useState(null); const [msgId,setMsg]=useState(null); const [bulk,setBulk]=useState(false); const [selIds,setSel]=useState([]);
   const [search,setSearch]=useState(""); const [tf,setTF]=useState("전체"); const [rf,setRF]=useState("전체");
+  const [dragOver,setDragOver]=useState(false); const [importMod,setImportMod]=useState(null);
   const fil=useMemo(()=>customers.filter(c=>{ const t=tf==="전체"||c.type===tf; const r=rf==="전체"||c.region===rf; const q=!search||(c.name||"").includes(search)||(c.contact||"").includes(search); return t&&r&&q; }),[customers,tf,rf,search]);
   const tog=id=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
   const addC=async d=>{ await sc([{...d,id:gid(),createdAt:td()},...customers]); toast_("등록!"); };
@@ -2444,7 +2445,94 @@ function CRMPage({db}){
   const delC=async id=>{ await sc(customers.filter(c=>c.id!==id)); toast_("삭제"); };
   const editC=customers.find(c=>c.id===editId);
   const msgC=customers.find(c=>c.id===msgId);
+
+  // 엑셀 내보내기
+  const exportCRM = () => {
+    exportCSV(`거래처목록_${td()}.csv`,
+      ["거래처명","유형","연락처","이메일","지역","주소","사업자번호","메모"],
+      customers.map(c=>[c.name,c.type||"-",c.contact||"-",c.email||"-",c.region||"-",c.address||"-",c.bizNum||"-",c.memo||"-"])
+    );
+    toast_("엑셀 파일 저장!");
+  };
+
+  // 템플릿 다운로드
+  const downloadTemplate = () => {
+    exportCSV("티밸런스_거래처_템플릿.csv",
+      ["거래처명","유형","연락처","이메일","지역","주소","사업자번호","메모"],
+      [
+        ["서울탁구동호회","동호회","010-1234-5678","seoul@club.com","서울","서울시 강남구","","주 1회 정기모임"],
+        ["강남중학교","학교/기관","02-1234-5678","","서울","서울시 강남구 대치동","","교복 주문"],
+        ["김철수","개인","010-9876-5432","","경기","경기도 수원시","",""],
+      ]
+    );
+    toast_("거래처 템플릿 다운로드!");
+  };
+
+  // CSV 파일 처리
+  const parseCSV = (text) => {
+    const lines = text.trim().split(/\r?\n/);
+    const headers = lines[0].split(",").map(h=>h.replace(/^"|"$/g,"").trim());
+    return lines.slice(1).filter(l=>l.trim()).map(line=>{
+      const cols=[]; let cur="",inQ=false;
+      for(const c of line){ if(c==='"'){inQ=!inQ;}else if(c===","&&!inQ){cols.push(cur.trim());cur="";}else{cur+=c;} }
+      cols.push(cur.trim());
+      const row={};
+      headers.forEach((h,i)=>{ row[h]=(cols[i]||"").replace(/^"|"$/g,"").trim(); });
+      return row;
+    });
+  };
+  const handleCSVFile = (file) => {
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const rows = parseCSV(e.target.result);
+        if(!rows.length){ toast_("데이터가 없습니다"); return; }
+        setImportMod({ rows, filename: file.name });
+      } catch(err) { toast_("CSV 파싱 오류: "+err.message); }
+    };
+    reader.readAsText(file, "UTF-8");
+  };
+  const handleDrop = (e) => {
+    e.preventDefault(); setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if(file && file.name.endsWith(".csv")) handleCSVFile(file);
+    else toast_("CSV 파일만 지원합니다");
+  };
+
   return <div>
+    {/* 구글시트 연동 가이드 */}
+    <div style={{background:"#0d1117",border:"1px solid #1e3a5f",borderRadius:12,padding:"12px 16px",marginBottom:12}}>
+      <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+        <span style={{fontSize:16}}>📊</span>
+        <span style={{fontWeight:600,fontSize:13,color:"#93c5fd"}}>구글시트 연동 가이드</span>
+      </div>
+      <div style={{fontSize:12,color:"#64748b",lineHeight:1.8,marginBottom:10}}>
+        1. <b style={{color:"#f1f5f9"}}>템플릿 다운로드</b> → 구글 드라이브 업로드 → 거래처 입력<br/>
+        2. <b style={{color:"#f1f5f9"}}>파일 → 다운로드 → CSV</b> 저장<br/>
+        3. 아래 <b style={{color:"#f1f5f9"}}>드래그&드롭 영역</b>에 파일을 올리면 자동 등록!
+      </div>
+      <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+        <SBtn onClick={downloadTemplate} color="#1d4ed8">📥 거래처 템플릿</SBtn>
+        <SBtn onClick={exportCRM} color="#0f766e">📊 현재 목록 엑셀 내보내기</SBtn>
+      </div>
+    </div>
+
+    {/* CSV 드래그&드롭 */}
+    <div
+      onDrop={handleDrop}
+      onDragOver={e=>{e.preventDefault();setDragOver(true);}}
+      onDragLeave={()=>setDragOver(false)}
+      style={{border:`2px dashed ${dragOver?"#3b82f6":"#334155"}`,borderRadius:12,padding:"16px",textAlign:"center",marginBottom:14,cursor:"pointer",transition:"all 0.2s",background:dragOver?"rgba(59,130,246,0.08)":"transparent"}}
+      onClick={()=>{ const inp=document.createElement("input"); inp.type="file"; inp.accept=".csv"; inp.onchange=e=>handleCSVFile(e.target.files[0]); inp.click(); }}
+    >
+      <div style={{fontSize:24,marginBottom:4}}>{dragOver?"⬇️":"📂"}</div>
+      <div style={{fontSize:13,fontWeight:600,color:dragOver?"#93c5fd":"#64748b"}}>
+        {dragOver?"파일을 놓으세요!":"CSV 파일을 드래그하거나 클릭해서 선택"}
+      </div>
+      <div style={{fontSize:11,color:"#475569",marginTop:3}}>구글시트에서 내보낸 .csv 파일 지원</div>
+    </div>
+
     <div style={GS.toolbar}>
       <input style={{...GS.sInp,width:180}} placeholder="이름·연락처 검색..." value={search} onChange={e=>setSearch(e.target.value)}/>
       <select style={GS.sSel} value={tf} onChange={e=>setTF(e.target.value)}><option value="전체">전체 유형</option>{CUST_TYPES.map(t=><option key={t}>{t}</option>)}</select>
@@ -2481,6 +2569,10 @@ function CRMPage({db}){
     {editC&&<CustModal initial={editC} onClose={()=>setEdit(null)} onSave={d=>{updC(editId,d);setEdit(null);}}/>}
     {msgC&&<SendMsgModal targets={[msgC]} templates={templates} onClose={()=>setMsg(null)}/>}
     {bulk&&<SendMsgModal targets={customers.filter(c=>selIds.includes(c.id))} templates={templates} onClose={()=>setBulk(false)} isBulk/>}
+    {importMod&&<CRMImportModal modal={importMod} customers={customers}
+      onClose={()=>setImportMod(null)}
+      onSave={async(arr)=>{ await sc([...arr,...customers]); toast_(`거래처 ${arr.length}개 가져오기 완료!`); setImportMod(null); }}
+    />}
   </div>;
 }
 function CustModal({initial,onClose,onSave}){
@@ -2499,6 +2591,72 @@ function CustModal({initial,onClose,onSave}){
     <MFR label="메모"><textarea style={{...GS.inp,height:50,resize:"vertical"}} value={f.memo} onChange={e=>s("memo",e.target.value)}/></MFR>
     <div style={GS.mBtns}><SBtn onClick={()=>{if(!f.name.trim())return;onSave(f);}} color="#3b82f6" full>{initial?"수정":"등록"}</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
   </Modal>;
+}
+
+function CRMImportModal({ modal, customers, onClose, onSave }) {
+  const { rows, filename } = modal;
+
+  const parsed = useMemo(() => rows.map(row => ({
+    id: gid(), createdAt: td(),
+    name:    row["거래처명"] || row["이름"] || row["name"] || "",
+    type:    CUST_TYPES.includes(row["유형"]) ? row["유형"] : "동호회",
+    contact: row["연락처"] || row["전화"] || row["phone"] || "",
+    email:   row["이메일"] || row["email"] || "",
+    region:  REGIONS.includes(row["지역"]) ? row["지역"] : "",
+    address: row["주소"] || row["address"] || "",
+    bizNum:  row["사업자번호"] || row["사업자"] || "",
+    memo:    row["메모"] || row["memo"] || "",
+  })).filter(c => c.name), [rows]);
+
+  const dups = parsed.filter(p => customers.some(c => c.name === p.name));
+
+  return (
+    <Modal title="📊 거래처 CSV 가져오기" onClose={onClose} wide>
+      <div style={{background:"#1e293b",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#94a3b8"}}>
+        📄 {filename} · {rows.length}행 감지 · {parsed.length}개 거래처 파싱됨
+      </div>
+
+      {dups.length > 0 && (
+        <div style={{background:"rgba(245,158,11,0.1)",border:"1px solid #f59e0b",borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,color:"#fcd34d"}}>
+          ⚠️ 이미 등록된 거래처 {dups.length}개: {dups.map(d=>d.name).join(", ")} — 중복 추가됩니다
+        </div>
+      )}
+
+      <MFR label={`미리보기 (${parsed.length}개)`}>
+        <div style={{maxHeight:300,overflowY:"auto",display:"flex",flexDirection:"column",gap:5}}>
+          {parsed.length === 0 && (
+            <div style={{color:"#ef4444",fontSize:12,padding:8}}>⚠️ 파싱된 데이터가 없습니다. 템플릿 형식을 확인해주세요.</div>
+          )}
+          {parsed.map((c,i) => (
+            <div key={i} style={{background:"#1e293b",borderRadius:8,padding:"9px 12px",display:"flex",justifyContent:"space-between",alignItems:"center",gap:10}}>
+              <div style={{flex:1,minWidth:0}}>
+                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+                  <span style={{fontWeight:600,fontSize:13}}>{c.name}</span>
+                  <TypeBadge type={c.type}/>
+                  {c.region && <span style={{background:"#0b0f1a",borderRadius:4,padding:"1px 6px",fontSize:10,color:"#64748b"}}>{c.region}</span>}
+                </div>
+                <div style={{fontSize:11,color:"#64748b",display:"flex",gap:10,flexWrap:"wrap"}}>
+                  {c.contact && <span>📞 {c.contact}</span>}
+                  {c.email   && <span>✉️ {c.email}</span>}
+                  {c.address && <span>📍 {c.address}</span>}
+                </div>
+              </div>
+              {dups.some(d=>d.name===c.name) && (
+                <span style={{background:"rgba(245,158,11,0.2)",border:"1px solid #f59e0b",color:"#fcd34d",borderRadius:5,padding:"1px 7px",fontSize:10,flexShrink:0}}>중복</span>
+              )}
+            </div>
+          ))}
+        </div>
+      </MFR>
+
+      <div style={GS.mBtns}>
+        <SBtn onClick={()=>onSave(parsed)} color="#3b82f6" full disabled={parsed.length===0}>
+          ✅ {parsed.length}개 거래처 가져오기
+        </SBtn>
+        <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
+      </div>
+    </Modal>
+  );
 }
 
 function PaymentsPage({db}){
