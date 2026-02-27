@@ -1217,6 +1217,7 @@ function InventoryPage({db}){
   const [agMod,setAM]=useState(null);
 
   const addU = async d=>{ const n=[{...d,id:gid()},...uniforms]; await su(n); toast_("유니폼 등록!"); };
+  const updU = async d=>{ await su(uniforms.map(u=>u.id===d.id?{...u,...d}:u)); toast_("수정 완료!"); };
   const delU = async id=>{ await su(uniforms.filter(u=>u.id!==id)); toast_("삭제"); };
   const addE = async d=>{ const n=[{...d,id:gid()},...equips]; await se(n); toast_("용품 등록!"); };
   const delE = async id=>{ await se(equips.filter(e=>e.id!==id)); toast_("삭제"); };
@@ -1267,6 +1268,7 @@ function InventoryPage({db}){
                     <span style={{fontWeight:700,color:tot===0?"#ef4444":low?"#f59e0b":"#10b981"}}>{tot}벌</span>
                   </div>
                   <div style={{display:"flex",gap:4}}>
+                    <SBtn onClick={()=>setUM({mode:"edit",data:u})} color="#374151">✏️ 수정</SBtn>
                     <SBtn onClick={()=>setIO({type:"uniform",item:u,mode:"in"})} color="#1d4ed8">입고</SBtn>
                     <SBtn onClick={()=>setIO({type:"uniform",item:u,mode:"out"})} color="#374151">출고</SBtn>
                     <SBtn onClick={()=>delU(u.id)} color="#7f1d1d">🗑</SBtn>
@@ -1340,30 +1342,64 @@ function InventoryPage({db}){
       </>}
 
       {uMod==="add"&&<UniformModal onClose={()=>setUM(null)} onSave={d=>{addU(d);setUM(null);}}/>}
+      {uMod?.mode==="edit"&&<UniformModal initial={uMod.data} onClose={()=>setUM(null)} onSave={d=>{updU({...uMod.data,...d});setUM(null);}}/>}
       {eMod==="add"&&<EquipModal onClose={()=>setEM(null)} onSave={d=>{addE(d);setEM(null);}}/>}
       {agMod&&<AgencyModal onClose={()=>setAM(null)} onSave={d=>{addAg(d);setAM(null);}}/>}
       {ioMod&&<IOModal modal={ioMod} agencies={agencies} onClose={()=>setIO(null)} onSave={d=>{doIO(d);setIO(null);}}/>}
     </div>
   );
 }
-function UniformModal({onClose,onSave}){
-  const [name,setName]=useState(""); const [year,setYear]=useState(String(new Date().getFullYear())); const [imgSrc,setImg]=useState(null); const [sizes,setSizes]=useState({}); const [cs,setCS]=useState("");
+function UniformModal({onClose,onSave,initial}){
+  const isEdit = !!initial;
+  const [name,setName]=useState(initial?.name||"");
+  const [year,setYear]=useState(initial?.year||String(new Date().getFullYear()));
+  const [imgSrc,setImg]=useState(initial?.imgSrc||null);
+  const [sizes,setSizes]=useState(initial?.sizes||{});
+  const [cs,setCS]=useState("");
   const imgRef=useRef();
   const toggleSz=sz=>setSizes(p=>p[sz]!==undefined?(()=>{const n={...p};delete n[sz];return n;})():{...p,[sz]:0});
   const addCustom=()=>{if(cs.trim()&&sizes[cs.trim()]===undefined){setSizes(p=>({...p,[cs.trim()]:0}));setCS("");}};
-  return <Modal title="유니폼 등록" onClose={onClose}>
+  return <Modal title={isEdit?"✏️ 유니폼 수정":"유니폼 등록"} onClose={onClose}>
     <input type="file" accept="image/*" ref={imgRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setImg(ev.target.result);r.readAsDataURL(f);}} />
     <MFR label="유니폼명 *"><input style={GS.inp} value={name} onChange={e=>setName(e.target.value)} placeholder="예) y25-01 스카이웨이브 블루"/></MFR>
     <div style={GS.fGrid}>
       <MFR label="연도"><input style={GS.inp} value={year} onChange={e=>setYear(e.target.value)}/></MFR>
-      <MFR label="이미지"><SBtn onClick={()=>imgRef.current.click()} color="#374151">📂 선택</SBtn>{imgSrc&&<img src={imgSrc} style={{height:36,borderRadius:4,marginTop:4}} alt=""/>}</MFR>
+      <MFR label="이미지">
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <SBtn onClick={()=>imgRef.current.click()} color="#374151">📂 선택</SBtn>
+          {imgSrc&&<>
+            <img src={imgSrc} style={{height:36,borderRadius:4}} alt=""/>
+            <SBtn onClick={()=>setImg(null)} color="#7f1d1d">✕</SBtn>
+          </>}
+        </div>
+      </MFR>
     </div>
     <MFR label="사이즈 선택">
       <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>{SIZES.map(sz=><div key={sz} style={{...SI.chip,...(sizes[sz]!==undefined?SI.chipA:{})}} onClick={()=>toggleSz(sz)}>{sz}</div>)}</div>
       <div style={{display:"flex",gap:5}}><input style={{...GS.inp,flex:1}} placeholder="직접입력" value={cs} onChange={e=>setCS(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCustom()}/><SBtn onClick={addCustom} color="#374151">추가</SBtn></div>
     </MFR>
-    {Object.keys(sizes).length>0&&<MFR label="초기 수량"><div style={{display:"flex",flexWrap:"wrap",gap:5}}>{Object.entries(sizes).map(([sz,qty])=><div key={sz} style={{display:"flex",alignItems:"center",gap:4,background:"#1e293b",padding:"3px 7px",borderRadius:5}}><span style={{fontSize:11,color:"#94a3b8",minWidth:28}}>{sz}</span><input type="number" min={0} style={{...GS.inp,width:50,padding:"2px 5px",fontSize:11}} value={qty} onChange={e=>setSizes(p=>({...p,[sz]:Number(e.target.value)}))}/></div>)}</div></MFR>}
-    <div style={GS.mBtns}><SBtn onClick={()=>{if(!name.trim())return;onSave({name,year,imgSrc,sizes});}} color="#3b82f6" full>등록</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
+    {Object.keys(sizes).length>0&&(
+      <MFR label={isEdit?"사이즈별 수량 수정":"초기 수량"}>
+        <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+          {Object.entries(sizes).map(([sz,qty])=>(
+            <div key={sz} style={{display:"flex",alignItems:"center",gap:4,background:"#1e293b",padding:"5px 8px",borderRadius:7,border:"1px solid #334155"}}>
+              <span style={{fontSize:12,color:"#94a3b8",minWidth:32,fontWeight:600}}>{sz}</span>
+              <button style={{width:24,height:24,borderRadius:5,background:"#0b0f1a",border:"1px solid #334155",color:"white",cursor:"pointer",fontSize:14,lineHeight:1}} onClick={()=>setSizes(p=>({...p,[sz]:Math.max(0,Number(p[sz]||0)-1)}))}>−</button>
+              <input type="number" min={0} style={{...GS.inp,width:52,padding:"2px 5px",fontSize:13,textAlign:"center"}} value={qty} onChange={e=>setSizes(p=>({...p,[sz]:Number(e.target.value)}))}/>
+              <button style={{width:24,height:24,borderRadius:5,background:"#0b0f1a",border:"1px solid #334155",color:"white",cursor:"pointer",fontSize:14,lineHeight:1}} onClick={()=>setSizes(p=>({...p,[sz]:Number(p[sz]||0)+1}))}>+</button>
+              <button style={{width:20,height:20,borderRadius:4,background:"#7f1d1d",border:"none",color:"white",cursor:"pointer",fontSize:10,marginLeft:2}} onClick={()=>setSizes(p=>{const n={...p};delete n[sz];return n;})}>✕</button>
+            </div>
+          ))}
+        </div>
+        <div style={{fontSize:11,color:"#64748b",marginTop:6}}>
+          총 재고: <span style={{color:"#f1f5f9",fontWeight:600}}>{Object.values(sizes).reduce((a,v)=>a+Number(v||0),0)}벌</span>
+        </div>
+      </MFR>
+    )}
+    <div style={GS.mBtns}>
+      <SBtn onClick={()=>{if(!name.trim())return;onSave({name,year,imgSrc,sizes});}} color={isEdit?"#10b981":"#3b82f6"} full>{isEdit?"✅ 수정 완료":"등록"}</SBtn>
+      <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
+    </div>
   </Modal>;
 }
 function EquipModal({onClose,onSave}){
