@@ -55,6 +55,39 @@ const BUILTIN_FONTS = [
 ];
 
 /* ═══════════════════════════════════════════════════════
+   MOBILE HELPERS
+═══════════════════════════════════════════════════════ */
+function useIsMobile() {
+  const [mob, setMob] = useState(() => window.innerWidth < 768);
+  useEffect(() => {
+    const fn = () => setMob(window.innerWidth < 768);
+    window.addEventListener("resize", fn);
+    return () => window.removeEventListener("resize", fn);
+  }, []);
+  return mob;
+}
+
+// inject global mobile CSS once
+if (!document.getElementById("tb-mobile-css")) {
+  const s = document.createElement("style");
+  s.id = "tb-mobile-css";
+  s.textContent = `
+    * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
+    input, select, textarea { font-size: 16px !important; }
+    ::-webkit-scrollbar { width: 3px; height: 3px; }
+    .tb-scroll-x { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    @media (max-width: 767px) {
+      .tb-hide-mobile { display: none !important; }
+      .tb-full-modal { width: 100vw !important; max-width: 100vw !important; height: 100vh !important; max-height: 100vh !important; border-radius: 0 !important; }
+    }
+    @media (min-width: 768px) {
+      .tb-hide-desktop { display: none !important; }
+    }
+  `;
+  document.head.appendChild(s);
+}
+
+/* ═══════════════════════════════════════════════════════
    ROOT APP
 ═══════════════════════════════════════════════════════ */
 export default function App() {
@@ -213,12 +246,14 @@ const LS = {
 };
 
 /* ═══════════════════════════════════════════════════════
-   MAIN APP — SHELL
+   MAIN APP — SHELL (모바일 대응)
 ═══════════════════════════════════════════════════════ */
 function MainApp({ user, onLogout }) {
   const [page, setPage]       = useState("grouporders");
   const [sideOpen, setSide]   = useState(true);
+  const [drawerOpen, setDrw]  = useState(false); // mobile drawer
   const [toast, setToast]     = useState(null);
+  const isMobile              = useIsMobile();
 
   // ── GLOBAL DATA STATE ──
   const [uniforms,  setU]  = useState([]);
@@ -251,7 +286,6 @@ function MainApp({ user, onLogout }) {
 
   const toast_ = (msg,ok=true) => { setToast({msg,ok}); setTimeout(()=>setToast(null),2800); };
 
-  // save helpers
   const su  = async n => { setU(n);  await sv("inv:uniforms",n); };
   const se  = async n => { setE(n);  await sv("inv:equips",n); };
   const sih = async n => { setIH(n); await sv("inv:history",n); };
@@ -266,54 +300,180 @@ function MainApp({ user, onLogout }) {
   const sgo = async n => { setGO(n); await sv("go:list",n); };
 
   const unpaidCount = payments.filter(p=>!p.paid).length;
-
   const db = { uniforms,equips,invHist,agencies,uSales,eSales,orders,customers,payments,invoices,templates,groupOrders,
     su,se,sih,sag,sus,ses,sor,sc,sp,si,st,sgo,toast_ };
 
+  const goPage = (id) => { setPage(id); setDrw(false); };
+
   if (!dbReady) return <Loading />;
 
+  // ── BOTTOM NAV items (모바일: 자주쓰는 5개 + 더보기) ──
+  const BOT_NAV = [
+    { id:"grouporders", icon:"🚚", label:"주문현황" },
+    { id:"orders",      icon:"📋", label:"명단관리" },
+    { id:"payments",    icon:"💳", label:"입금확인" },
+    { id:"sales",       icon:"📊", label:"매출" },
+    { id:"__more__",    icon:"☰",  label:"더보기" },
+  ];
+
+  const curItem = NAV_ITEMS.find(n=>n.id===page);
+
   return (
-    <div style={A.root}>
-      {/* SIDEBAR */}
-      <div style={{...A.sidebar,...(!sideOpen?A.sidebarClosed:{})}}>
-        <div style={A.sideTop}>
-          <div style={A.sideLogoRow}>
-            {sideOpen && <span style={A.sideLogo}>🏓 티밸런스</span>}
-            <button style={A.sideToggle} onClick={()=>setSide(p=>!p)}>{sideOpen?"◀":"▶"}</button>
-          </div>
-          {sideOpen && <div style={A.sideUser}><span style={{fontSize:18}}>{user.avatar||"👤"}</span><div><div style={{fontSize:12,fontWeight:600,color:"#f1f5f9"}}>{user.name}</div><div style={{fontSize:10,color:"#64748b"}}>{user.phone||"카카오 로그인"}</div></div></div>}
-        </div>
-        <nav style={A.nav}>
-          {NAV_ITEMS.map(item=>(
-            <div key={item.id} style={{...A.navItem,...(page===item.id?A.navItemA:{})}} onClick={()=>setPage(item.id)} title={item.label}>
-              <span style={A.navIcon}>{item.icon}</span>
-              {sideOpen && <span style={A.navLabel}>{item.label}{item.id==="payments"&&unpaidCount>0?<span style={A.navBadge}>{unpaidCount}</span>:null}</span>}
+    <div style={{ display:"flex", height:"100vh", background:"#0b0f1a", color:"#e2e8f0",
+      fontFamily:"'Apple SD Gothic Neo','Malgun Gothic','Noto Sans KR',sans-serif",
+      overflow:"hidden", flexDirection: isMobile ? "column" : "row" }}>
+
+      {/* ── PC SIDEBAR ── */}
+      {!isMobile && (
+        <div style={{ width:sideOpen?220:56, background:"#0d1117", borderRight:"1px solid #1e293b",
+          display:"flex", flexDirection:"column", transition:"width 0.2s", flexShrink:0, overflow:"hidden" }}>
+          <div style={{ padding:"14px 12px", borderBottom:"1px solid #1e293b" }}>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:sideOpen?10:0 }}>
+              {sideOpen && <span style={{ fontSize:13, fontWeight:700, color:"#f1f5f9", whiteSpace:"nowrap" }}>🏓 티밸런스</span>}
+              <button style={{ background:"none", border:"none", color:"#64748b", cursor:"pointer", fontSize:12, padding:4, borderRadius:4 }}
+                onClick={()=>setSide(p=>!p)}>{sideOpen?"◀":"▶"}</button>
             </div>
-          ))}
-        </nav>
-        {sideOpen && <div style={A.sideBottom}><button style={A.logoutBtn} onClick={onLogout}>🚪 로그아웃</button></div>}
+            {sideOpen && <div style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0" }}>
+              <span style={{ fontSize:18 }}>{user.avatar||"👤"}</span>
+              <div>
+                <div style={{ fontSize:12, fontWeight:600, color:"#f1f5f9" }}>{user.name}</div>
+                <div style={{ fontSize:10, color:"#64748b" }}>{user.phone||"카카오 로그인"}</div>
+              </div>
+            </div>}
+          </div>
+          <nav style={{ flex:1, padding:"8px 6px", overflowY:"auto", display:"flex", flexDirection:"column", gap:2 }}>
+            {NAV_ITEMS.map(item=>(
+              <div key={item.id} style={{ display:"flex", alignItems:"center", gap:10, padding:"9px 10px", borderRadius:8,
+                cursor:"pointer", transition:"all 0.15s",
+                background:page===item.id?"#1e293b":"transparent",
+                color:page===item.id?"#f1f5f9":"#64748b",
+                borderLeft:page===item.id?"3px solid #3b82f6":"3px solid transparent" }}
+                onClick={()=>setPage(item.id)} title={item.label}>
+                <span style={{ fontSize:16, flexShrink:0, width:20, textAlign:"center" }}>{item.icon}</span>
+                {sideOpen && <span style={{ fontSize:12, fontWeight:500, whiteSpace:"nowrap", display:"flex", alignItems:"center", gap:6 }}>
+                  {item.label}
+                  {item.id==="payments"&&unpaidCount>0&&<span style={{ background:"#ef4444", color:"white", borderRadius:10, padding:"1px 5px", fontSize:10, fontWeight:700 }}>{unpaidCount}</span>}
+                </span>}
+              </div>
+            ))}
+          </nav>
+          {sideOpen && <div style={{ padding:"12px", borderTop:"1px solid #1e293b" }}>
+            <button style={{ background:"none", border:"1px solid #334155", color:"#64748b", borderRadius:7, padding:"7px 12px", cursor:"pointer", fontSize:12, width:"100%" }}
+              onClick={onLogout}>🚪 로그아웃</button>
+          </div>}
+        </div>
+      )}
+
+      {/* ── MOBILE DRAWER OVERLAY ── */}
+      {isMobile && drawerOpen && (
+        <div style={{ position:"fixed", inset:0, zIndex:300, display:"flex" }}>
+          {/* backdrop */}
+          <div style={{ position:"absolute", inset:0, background:"rgba(0,0,0,0.7)" }} onClick={()=>setDrw(false)}/>
+          {/* drawer panel */}
+          <div style={{ position:"relative", width:260, background:"#0d1117", borderRight:"1px solid #1e293b",
+            display:"flex", flexDirection:"column", height:"100%", zIndex:1 }}>
+            <div style={{ padding:"16px 14px", borderBottom:"1px solid #1e293b", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+                <span style={{ fontSize:22 }}>{user.avatar||"👤"}</span>
+                <div>
+                  <div style={{ fontSize:13, fontWeight:700, color:"#f1f5f9" }}>{user.name}</div>
+                  <div style={{ fontSize:11, color:"#64748b" }}>{user.phone||"카카오 로그인"}</div>
+                </div>
+              </div>
+              <button style={{ background:"none", border:"none", color:"#64748b", fontSize:20, cursor:"pointer" }} onClick={()=>setDrw(false)}>✕</button>
+            </div>
+            <nav style={{ flex:1, padding:"10px 8px", overflowY:"auto", display:"flex", flexDirection:"column", gap:2 }}>
+              {NAV_ITEMS.map(item=>(
+                <div key={item.id} style={{ display:"flex", alignItems:"center", gap:12, padding:"12px 12px", borderRadius:10,
+                  cursor:"pointer",
+                  background:page===item.id?"#1e293b":"transparent",
+                  color:page===item.id?"#f1f5f9":"#94a3b8",
+                  borderLeft:page===item.id?"3px solid #3b82f6":"3px solid transparent" }}
+                  onClick={()=>goPage(item.id)}>
+                  <span style={{ fontSize:18 }}>{item.icon}</span>
+                  <span style={{ fontSize:14, fontWeight:page===item.id?600:400 }}>
+                    {item.label}
+                    {item.id==="payments"&&unpaidCount>0&&<span style={{ background:"#ef4444", color:"white", borderRadius:10, padding:"1px 6px", fontSize:11, fontWeight:700, marginLeft:6 }}>{unpaidCount}</span>}
+                  </span>
+                </div>
+              ))}
+            </nav>
+            <div style={{ padding:"14px", borderTop:"1px solid #1e293b" }}>
+              <button style={{ background:"#1e293b", border:"1px solid #334155", color:"#94a3b8", borderRadius:8, padding:"10px", cursor:"pointer", fontSize:13, width:"100%" }}
+                onClick={()=>{ onLogout(); setDrw(false); }}>🚪 로그아웃</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MAIN CONTENT ── */}
+      <div style={{ flex:1, display:"flex", flexDirection:"column", overflow:"hidden", minWidth:0 }}>
+        {/* TOP BAR */}
+        <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between",
+          padding: isMobile ? "10px 14px" : "12px 20px",
+          background:"#0d1117", borderBottom:"1px solid #1e293b", flexShrink:0 }}>
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            {isMobile && (
+              <button style={{ background:"none", border:"none", color:"#94a3b8", fontSize:20, cursor:"pointer", padding:"2px 4px", lineHeight:1 }}
+                onClick={()=>setDrw(true)}>☰</button>
+            )}
+            <div style={{ fontSize: isMobile?14:16, fontWeight:600, color:"#f1f5f9" }}>
+              {curItem?.icon} {curItem?.label}
+            </div>
+          </div>
+          <div style={{ fontSize:11, color:"#64748b" }}>
+            {new Date().toLocaleDateString("ko-KR",{month:"short",day:"numeric",weekday:"short"})}
+          </div>
+        </div>
+
+        {/* PAGE CONTENT */}
+        <div style={{ flex:1, overflowY:"auto", padding: isMobile ? 12 : 20,
+          paddingBottom: isMobile ? 80 : 20 }}>
+          {page==="grouporders"&& <GroupOrdersPage db={db} isMobile={isMobile}/>}
+          {page==="design"    && <DesignTool isMobile={isMobile}/>}
+          {page==="inventory" && <InventoryPage db={db} isMobile={isMobile}/>}
+          {page==="sales"     && <SalesPage db={db} isMobile={isMobile}/>}
+          {page==="orders"    && <OrdersPage db={db} isMobile={isMobile}/>}
+          {page==="crm"       && <CRMPage db={db} isMobile={isMobile}/>}
+          {page==="payments"  && <PaymentsPage db={db} isMobile={isMobile}/>}
+          {page==="invoices"  && <InvoicesPage db={db} isMobile={isMobile}/>}
+          {page==="messages"  && <MessagesPage db={db} isMobile={isMobile}/>}
+        </div>
       </div>
 
-      {/* MAIN CONTENT */}
-      <div style={A.main}>
-        <div style={A.topBar}>
-          <div style={A.pageTitle}>{NAV_ITEMS.find(n=>n.id===page)?.icon} {NAV_ITEMS.find(n=>n.id===page)?.label}</div>
-          <div style={{fontSize:12,color:"#64748b"}}>{new Date().toLocaleDateString("ko-KR",{year:"numeric",month:"long",day:"numeric",weekday:"short"})}</div>
+      {/* ── MOBILE BOTTOM NAV ── */}
+      {isMobile && (
+        <div style={{ position:"fixed", bottom:0, left:0, right:0, zIndex:200,
+          background:"#0d1117", borderTop:"1px solid #1e293b",
+          display:"flex", alignItems:"stretch",
+          paddingBottom:"env(safe-area-inset-bottom,0px)" }}>
+          {BOT_NAV.map(item=>{
+            const isActive = item.id==="__more__" ? false : page===item.id;
+            const isMore   = item.id==="__more__";
+            return (
+              <div key={item.id} style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center",
+                justifyContent:"center", padding:"8px 4px 6px",
+                cursor:"pointer", position:"relative",
+                color: isActive?"#3b82f6":"#64748b",
+                borderTop: isActive?"2px solid #3b82f6":"2px solid transparent" }}
+                onClick={()=>isMore ? setDrw(true) : goPage(item.id)}>
+                <span style={{ fontSize:18, lineHeight:1 }}>{item.icon}</span>
+                <span style={{ fontSize:10, marginTop:3, fontWeight:isActive?600:400 }}>{item.label}</span>
+                {item.id==="payments" && unpaidCount>0 && (
+                  <span style={{ position:"absolute", top:4, right:"calc(50% - 18px)",
+                    background:"#ef4444", color:"white", borderRadius:10,
+                    padding:"0px 4px", fontSize:9, fontWeight:700, minWidth:14, textAlign:"center" }}>{unpaidCount}</span>
+                )}
+              </div>
+            );
+          })}
         </div>
-        <div style={A.pageContent}>
-          {page==="grouporders"&& <GroupOrdersPage db={db} />}
-          {page==="design"    && <DesignTool />}
-          {page==="inventory" && <InventoryPage db={db} />}
-          {page==="sales"     && <SalesPage db={db} />}
-          {page==="orders"    && <OrdersPage db={db} />}
-          {page==="crm"       && <CRMPage db={db} />}
-          {page==="payments"  && <PaymentsPage db={db} />}
-          {page==="invoices"  && <InvoicesPage db={db} />}
-          {page==="messages"  && <MessagesPage db={db} />}
-        </div>
-      </div>
+      )}
 
-      {toast && <div style={{...A.toast,background:toast.ok?"#064e3b":"#7f1d1d"}}>{toast.msg}</div>}
+      {toast && <div style={{ position:"fixed", bottom: isMobile?76:24, left:"50%", transform:"translateX(-50%)",
+        padding:"10px 26px", borderRadius:10, color:"white", fontSize:13, fontWeight:500,
+        zIndex:999, boxShadow:"0 4px 24px rgba(0,0,0,0.5)", whiteSpace:"nowrap",
+        background:toast.ok?"#064e3b":"#7f1d1d" }}>{toast.msg}</div>}
     </div>
   );
 }
@@ -608,13 +768,20 @@ function Chip({children,active,onClick,green,red}){
   return <div onClick={onClick} style={{padding:"4px 9px",borderRadius:6,background:bg,border:`1px solid ${bc}`,color:cl,cursor:"pointer",fontSize:11,fontWeight:500,userSelect:"none",whiteSpace:"nowrap"}}>{children}</div>;
 }
 function Modal({title,onClose,children,wide=false}){
-  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center",backdropFilter:"blur(4px)"}} onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
-    <div style={{background:"#111827",border:"1px solid #1e293b",borderRadius:14,width:wide?"min(700px,97vw)":"min(540px,97vw)",maxHeight:"90vh",overflow:"hidden",display:"flex",flexDirection:"column"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"14px 20px",borderBottom:"1px solid #1e293b",flexShrink:0}}>
-        <span style={{fontSize:14,fontWeight:600}}>{title}</span>
-        <button style={{background:"none",border:"none",color:"#9ca3af",cursor:"pointer",fontSize:16}} onClick={onClose}>✕</button>
+  const isMob = window.innerWidth < 768;
+  return <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.78)",zIndex:200,display:"flex",
+    alignItems:isMob?"flex-end":"center",justifyContent:"center",backdropFilter:"blur(4px)"}}
+    onClick={e=>{if(e.target===e.currentTarget)onClose();}}>
+    <div style={{background:"#111827",border:"1px solid #1e293b",
+      borderRadius:isMob?"20px 20px 0 0":"14px",
+      width:isMob?"100vw":wide?"min(700px,97vw)":"min(540px,97vw)",
+      maxHeight:isMob?"92vh":"90vh",
+      overflow:"hidden",display:"flex",flexDirection:"column"}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"16px 20px",borderBottom:"1px solid #1e293b",flexShrink:0}}>
+        <span style={{fontSize:15,fontWeight:600}}>{title}</span>
+        <button style={{background:"none",border:"none",color:"#9ca3af",cursor:"pointer",fontSize:20,lineHeight:1,padding:"2px 6px"}} onClick={onClose}>✕</button>
       </div>
-      <div style={{padding:"16px 20px",overflowY:"auto",flex:1}}>{children}</div>
+      <div style={{padding:"16px 20px",overflowY:"auto",flex:1,WebkitOverflowScrolling:"touch"}}>{children}</div>
     </div>
   </div>;
 }
@@ -629,25 +796,25 @@ function PayTag({method}){
   return <span style={{background:bg,color:"white",padding:"2px 6px",borderRadius:4,fontSize:10,fontWeight:500}}>{method||"-"}</span>;
 }
 function PaidBtn({paid,onClick}){
-  return <button onClick={onClick} style={{background:paid?"#064e3b":"#7f1d1d",color:paid?"#6ee7b7":"#fca5a5",border:"none",borderRadius:5,padding:"3px 8px",cursor:"pointer",fontSize:10,fontWeight:600,whiteSpace:"nowrap"}}>{paid?"✓ 완료":"미수금"}</button>;
+  return <button onClick={onClick} style={{background:paid?"#064e3b":"#7f1d1d",color:paid?"#6ee7b7":"#fca5a5",border:"none",borderRadius:5,padding:"5px 10px",cursor:"pointer",fontSize:11,fontWeight:600,whiteSpace:"nowrap"}}>{paid?"✓ 완료":"미수금"}</button>;
 }
 const GS = {
   page:    { display:"flex",flexDirection:"column",gap:0 },
   toolbar: { display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center" },
-  sInp:    { background:"#1e293b",border:"1px solid #334155",borderRadius:7,padding:"7px 12px",color:"#f1f5f9",fontSize:12,outline:"none" },
-  sSel:    { background:"#1e293b",border:"1px solid #334155",borderRadius:7,padding:"7px 10px",color:"#f1f5f9",fontSize:12,outline:"none",cursor:"pointer" },
+  sInp:    { background:"#1e293b",border:"1px solid #334155",borderRadius:7,padding:"7px 12px",color:"#f1f5f9",fontSize:14,outline:"none" },
+  sSel:    { background:"#1e293b",border:"1px solid #334155",borderRadius:7,padding:"7px 10px",color:"#f1f5f9",fontSize:14,outline:"none",cursor:"pointer" },
   tbl:     { background:"#111827",borderRadius:12,overflow:"hidden",border:"1px solid #1e293b" },
   tRow:    { display:"grid",gap:6,padding:"9px 14px",alignItems:"center",borderTop:"1px solid #1e293b",fontSize:12 },
   fRow:    { marginBottom:12 },
-  fLabel:  { fontSize:11,color:"#94a3b8",fontWeight:500,marginBottom:5 },
-  inp:     { background:"#1e293b",border:"1px solid #334155",borderRadius:7,padding:"8px 12px",color:"#f1f5f9",fontSize:13,outline:"none",width:"100%",boxSizing:"border-box" },
+  fLabel:  { fontSize:12,color:"#94a3b8",fontWeight:500,marginBottom:5 },
+  inp:     { background:"#1e293b",border:"1px solid #334155",borderRadius:7,padding:"10px 12px",color:"#f1f5f9",fontSize:16,outline:"none",width:"100%",boxSizing:"border-box" },
   mBtns:   { display:"flex",gap:8,marginTop:16 },
   fGrid:   { display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:4 },
   chips:   { display:"flex",flexWrap:"wrap",gap:5 },
 };
 function MFR({label,children}){ return <div style={GS.fRow}><div style={GS.fLabel}>{label}</div>{children}</div>; }
-function SumPill({label,val,color}){ return <div style={{background:"#1e293b",border:"1px solid #334155",borderRadius:7,padding:"5px 11px",display:"flex",flexDirection:"column",alignItems:"center"}}><span style={{fontSize:10,color:"#64748b"}}>{label}</span><span style={{fontSize:12,fontWeight:600,color}}>{val}</span></div>; }
-function StatBadge({label,val,color}){ return <div style={{background:"#1e293b",border:`1px solid ${color}33`,borderRadius:8,padding:"4px 10px",textAlign:"center"}}><div style={{fontSize:9,color:"#64748b"}}>{label}</div><div style={{fontSize:12,fontWeight:700,color,marginTop:1}}>{val}</div></div>; }
+function SumPill({label,val,color}){ return <div style={{background:"#1e293b",border:"1px solid #334155",borderRadius:7,padding:"6px 12px",display:"flex",flexDirection:"column",alignItems:"center"}}><span style={{fontSize:10,color:"#64748b"}}>{label}</span><span style={{fontSize:13,fontWeight:600,color}}>{val}</span></div>; }
+function StatBadge({label,val,color}){ return <div style={{background:"#1e293b",border:`1px solid ${color}33`,borderRadius:8,padding:"6px 12px",textAlign:"center"}}><div style={{fontSize:9,color:"#64748b"}}>{label}</div><div style={{fontSize:13,fontWeight:700,color,marginTop:1}}>{val}</div></div>; }
 
 /* ═══════════════════════════════════════════════════════
    MODULE 2 — INVENTORY
@@ -1381,6 +1548,7 @@ function CustModal({initial,onClose,onSave}){
 function PaymentsPage({db}){
   const {payments,customers,sp,toast_}=db;
   const [addM,setAdd]=useState(false); const [filter,setFilter]=useState("전체"); const [search,setSearch]=useState("");
+  const isMob = window.innerWidth < 768;
   const fil=useMemo(()=>payments.filter(p=>{ const f=filter==="전체"||(filter==="미수금"?!p.paid:p.paid); const q=!search||(p.customerName||"").includes(search)||(p.detail||"").includes(search); return f&&q; }),[payments,filter,search]);
   const unAmt=payments.filter(p=>!p.paid).reduce((a,p)=>a+Number(p.amount||0),0);
   const pAmt=payments.filter(p=>p.paid).reduce((a,p)=>a+Number(p.amount||0),0);
@@ -1399,23 +1567,44 @@ function PaymentsPage({db}){
     </div>
     <div style={GS.toolbar}>
       <div style={GS.chips}>{["전체","미수금","입금완료"].map(f=><div key={f} style={{...SI.chip,...(filter===f?{...SI.chipA,...(f==="미수금"?{background:"#7f1d1d",borderColor:"#ef4444",color:"#fca5a5"}:{})}:{})}} onClick={()=>setFilter(f)}>{f}</div>)}</div>
-      <input style={{...GS.sInp,flex:1,maxWidth:200}} placeholder="거래처·내역 검색..." value={search} onChange={e=>setSearch(e.target.value)}/>
-      <SBtn onClick={()=>setAdd(true)} color="#3b82f6" style={{marginLeft:"auto"}}>+ 입금 등록</SBtn>
+      <input style={{...GS.sInp,flex:1,maxWidth:isMob?undefined:200}} placeholder="거래처·내역 검색..." value={search} onChange={e=>setSearch(e.target.value)}/>
+      <SBtn onClick={()=>setAdd(true)} color="#3b82f6" style={{marginLeft:"auto"}}>+ 등록</SBtn>
     </div>
     {fil.length===0?<EmptyState icon="💳" msg="내역 없음"/>:
-      <div style={GS.tbl}>
-        <div style={{...GS.tRow,...gc,background:"#0b0f1a",borderTop:"none",fontSize:10,fontWeight:600,color:"#64748b"}}><span>날짜</span><span>거래처</span><span>내역</span><span style={{textAlign:"right"}}>금액</span><span style={{textAlign:"center"}}>결제</span><span style={{textAlign:"center"}}>입금</span><span style={{textAlign:"center"}}>입금일</span><span style={{textAlign:"center"}}>관리</span></div>
-        {fil.map(p=><div key={p.id} style={{...GS.tRow,...gc,...(!p.paid?{background:"rgba(239,68,68,0.04)"}:{})}}>
-          <span style={{fontSize:11,color:"#94a3b8"}}>{p.date}</span>
-          <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.customerName||"-"}</span>
-          <span style={{fontSize:11,color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.detail||"-"}</span>
-          <span style={{textAlign:"right",fontWeight:700,color:p.paid?"#10b981":"#ef4444"}}>{won(p.amount)}</span>
-          <span style={{textAlign:"center"}}><PayTag method={p.payMethod}/></span>
-          <span style={{textAlign:"center"}}><PaidBtn paid={p.paid} onClick={()=>tog(p.id)}/></span>
-          <span style={{textAlign:"center",fontSize:11,color:"#64748b"}}>{p.paidAt||"-"}</span>
-          <div style={{textAlign:"center"}}><MBtn red onClick={()=>del(p.id)}>삭제</MBtn></div>
-        </div>)}
-      </div>
+      isMob
+      ? <div style={{display:"flex",flexDirection:"column",gap:10}}>
+          {fil.map(p=><div key={p.id} style={{background:"#111827",borderRadius:12,border:`1px solid ${p.paid?"#1e293b":"#ef4444"}`,padding:14,...(!p.paid?{background:"rgba(239,68,68,0.04)"}:{})}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:8}}>
+              <div>
+                <div style={{fontWeight:700,fontSize:15}}>{p.customerName||"-"}</div>
+                <div style={{fontSize:12,color:"#94a3b8",marginTop:2}}>{p.detail||"-"}</div>
+              </div>
+              <div style={{fontWeight:800,fontSize:17,color:p.paid?"#10b981":"#ef4444"}}>{won(p.amount)}</div>
+            </div>
+            <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+              <span style={{fontSize:11,color:"#64748b"}}>{p.date}</span>
+              <PayTag method={p.payMethod}/>
+              {p.paid&&<span style={{fontSize:11,color:"#64748b"}}>입금 {p.paidAt}</span>}
+              <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+                <PaidBtn paid={p.paid} onClick={()=>tog(p.id)}/>
+                <SBtn onClick={()=>del(p.id)} color="#7f1d1d">🗑</SBtn>
+              </div>
+            </div>
+          </div>)}
+        </div>
+      : <div style={GS.tbl}>
+          <div style={{...GS.tRow,...gc,background:"#0b0f1a",borderTop:"none",fontSize:10,fontWeight:600,color:"#64748b"}}><span>날짜</span><span>거래처</span><span>내역</span><span style={{textAlign:"right"}}>금액</span><span style={{textAlign:"center"}}>결제</span><span style={{textAlign:"center"}}>입금</span><span style={{textAlign:"center"}}>입금일</span><span style={{textAlign:"center"}}>관리</span></div>
+          {fil.map(p=><div key={p.id} style={{...GS.tRow,...gc,...(!p.paid?{background:"rgba(239,68,68,0.04)"}:{})}}>
+            <span style={{fontSize:11,color:"#94a3b8"}}>{p.date}</span>
+            <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.customerName||"-"}</span>
+            <span style={{fontSize:11,color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{p.detail||"-"}</span>
+            <span style={{textAlign:"right",fontWeight:700,color:p.paid?"#10b981":"#ef4444"}}>{won(p.amount)}</span>
+            <span style={{textAlign:"center"}}><PayTag method={p.payMethod}/></span>
+            <span style={{textAlign:"center"}}><PaidBtn paid={p.paid} onClick={()=>tog(p.id)}/></span>
+            <span style={{textAlign:"center",fontSize:11,color:"#64748b"}}>{p.paidAt||"-"}</span>
+            <div style={{textAlign:"center"}}><MBtn red onClick={()=>del(p.id)}>삭제</MBtn></div>
+          </div>)}
+        </div>
     }
     {addM&&<PayModal customers={customers} onClose={()=>setAdd(false)} onSave={d=>{add(d);setAdd(false);}}/>}
   </div>;
@@ -1707,24 +1896,25 @@ function GroupOrdersPage({ db }) {
   const soonCount     = pending.filter(o => o.expectedAt && diffDays(o.expectedAt) >= 0 && diffDays(o.expectedAt) <= 3).length;
 
   const editOrder = groupOrders.find(o => o.id === editId);
+  const isMob = window.innerWidth < 768;
 
   return (
     <div>
       {/* SUMMARY BANNER */}
-      <div style={{ display:"flex", gap:10, marginBottom:16, flexWrap:"wrap" }}>
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr 1fr 1fr", gap:8, marginBottom:14 }}>
         <StatBadge label="전체 미입고" val={groupOrders.filter(o=>o.status!=="arrived").length + "건"} color="#3b82f6"/>
         <StatBadge label="납기 초과" val={overdueCount + "건"} color="#ef4444"/>
-        <StatBadge label="3일 이내 납기" val={soonCount + "건"} color="#f59e0b"/>
+        <StatBadge label="3일 이내" val={soonCount + "건"} color="#f59e0b"/>
         <StatBadge label="입고완료" val={groupOrders.filter(o=>o.status==="arrived").length + "건"} color="#10b981"/>
       </div>
 
       {/* OVERDUE ALERT */}
       {overdueCount > 0 && (
-        <div style={{ background:"rgba(239,68,68,0.1)", border:"1px solid #ef4444", borderRadius:10, padding:"10px 16px", marginBottom:14, display:"flex", gap:10, alignItems:"center" }}>
-          <span style={{ fontSize:20 }}>🚨</span>
+        <div style={{ background:"rgba(239,68,68,0.1)", border:"1px solid #ef4444", borderRadius:10, padding:"10px 14px", marginBottom:12, display:"flex", gap:10, alignItems:"flex-start" }}>
+          <span style={{ fontSize:18, flexShrink:0 }}>🚨</span>
           <div>
-            <div style={{ fontWeight:600, color:"#fca5a5", fontSize:13 }}>납기 초과 주문이 있습니다!</div>
-            <div style={{ fontSize:11, color:"#f87171", marginTop:2 }}>
+            <div style={{ fontWeight:600, color:"#fca5a5", fontSize:13 }}>납기 초과 주문!</div>
+            <div style={{ fontSize:11, color:"#f87171", marginTop:2, lineHeight:1.6 }}>
               {pending.filter(o=>o.expectedAt&&diffDays(o.expectedAt)<0).map(o=>`${o.customer} (D+${Math.abs(diffDays(o.expectedAt))})`).join(" · ")}
             </div>
           </div>
@@ -1732,33 +1922,25 @@ function GroupOrdersPage({ db }) {
       )}
 
       {/* TOOLBAR */}
-      <div style={GS.toolbar}>
-        <input style={{ ...GS.sInp, width:200 }} placeholder="거래처명·유니폼명 검색..." value={search} onChange={e=>setSearch(e.target.value)}/>
-        <div style={{ display:"flex", gap:6, marginLeft:"auto" }}>
-          <SBtn onClick={()=>setAdd(true)} color="#f59e0b">+ 주문 등록</SBtn>
-        </div>
+      <div style={{ display:"flex", gap:8, marginBottom:12, alignItems:"center" }}>
+        <input style={{ ...GS.sInp, flex:1, minWidth:0 }} placeholder="거래처명·유니폼명 검색..." value={search} onChange={e=>setSearch(e.target.value)}/>
+        <SBtn onClick={()=>setAdd(true)} color="#f59e0b">+ 등록</SBtn>
       </div>
 
       {/* VIEW TABS */}
       <div style={{ display:"flex", gap:0, marginBottom:0, borderBottom:"1px solid #1e293b" }}>
-        <div style={{ padding:"9px 20px", fontSize:13, fontWeight:500, cursor:"pointer",
-          color:viewTab==="pending"?"#f1f5f9":"#64748b",
-          borderBottom:viewTab==="pending"?"2px solid #f59e0b":"2px solid transparent",
-          background:viewTab==="pending"?"#1e293b":"transparent"
-        }} onClick={()=>setViewTab("pending")}>
-          📋 미입고 현황 <span style={{ background:"#ef4444", color:"white", borderRadius:10, padding:"1px 7px", fontSize:11, marginLeft:4, fontWeight:700 }}>{pending.length}</span>
-        </div>
-        <div style={{ padding:"9px 20px", fontSize:13, fontWeight:500, cursor:"pointer",
-          color:viewTab==="arrived"?"#f1f5f9":"#64748b",
-          borderBottom:viewTab==="arrived"?"2px solid #10b981":"2px solid transparent",
-          background:viewTab==="arrived"?"#1e293b":"transparent"
-        }} onClick={()=>setViewTab("arrived")}>
-          ✅ 입고완료
-          <span style={{ background:"#10b981", color:"white", borderRadius:10, padding:"1px 7px", fontSize:11, marginLeft:4, fontWeight:700 }}>{arrived.length}</span>
-        </div>
+        {[["pending","📋 미입고",pending.length,"#f59e0b","#ef4444"],["arrived","✅ 입고완료",arrived.length,"#10b981","#10b981"]].map(([id,label,cnt,active,badge])=>(
+          <div key={id} style={{ flex:1, padding:"10px 8px", fontSize:13, fontWeight:500, cursor:"pointer", textAlign:"center",
+            color:viewTab===id?"#f1f5f9":"#64748b",
+            borderBottom:viewTab===id?`2px solid ${active}`:"2px solid transparent",
+            background:viewTab===id?"#1e293b":"transparent"
+          }} onClick={()=>setViewTab(id)}>
+            {label} <span style={{ background:badge, color:"white", borderRadius:10, padding:"1px 6px", fontSize:11, marginLeft:4, fontWeight:700 }}>{cnt}</span>
+          </div>
+        ))}
       </div>
 
-      {/* PENDING TABLE */}
+      {/* PENDING */}
       {viewTab === "pending" && (
         <div style={{ marginTop:12 }}>
           {/* Step filter chips */}
@@ -1772,100 +1954,153 @@ function GroupOrdersPage({ db }) {
 
           {pending.length === 0
             ? <EmptyState icon="🚚" msg="미입고 주문이 없습니다" sub="모든 단체복이 입고 완료되었습니다 🎉"/>
-            : (
-              <div style={GS.tbl}>
-                {/* TABLE HEADER */}
-                <div style={{ display:"grid", gridTemplateColumns:"120px 130px 1fr 80px 100px 100px 100px 90px 180px", gap:6, padding:"9px 14px", background:"#0b0f1a", fontSize:10, fontWeight:600, color:"#64748b", textTransform:"uppercase", letterSpacing:"0.4px" }}>
-                  <span>거래처명</span>
-                  <span>유니폼명</span>
-                  <span>메모</span>
-                  <span style={{textAlign:"center"}}>수량</span>
-                  <span style={{textAlign:"center"}}>발주일</span>
-                  <span style={{textAlign:"center"}}>예상 납기일</span>
-                  <span style={{textAlign:"center"}}>D-day</span>
-                  <span style={{textAlign:"center"}}>진행상태</span>
-                  <span style={{textAlign:"center"}}>관리</span>
-                </div>
-                {pending.map(o => {
-                  const dl = diffDays(o.expectedAt);
-                  const st = GO_STEPS.find(s=>s.key===o.status)||GO_STEPS[0];
-                  return (
-                    <div key={o.id} style={{
-                      display:"grid", gridTemplateColumns:"120px 130px 1fr 80px 100px 100px 100px 90px 180px",
-                      gap:6, padding:"10px 14px", borderTop:"1px solid #1e293b", alignItems:"center", fontSize:12,
-                      background: dl !== null && dl < 0 ? "rgba(239,68,68,0.06)" : dl !== null && dl <= 3 ? "rgba(245,158,11,0.04)" : ""
-                    }}>
-                      <span style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{o.customer||"-"}</span>
-                      <span style={{ color:"#94a3b8", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{o.uniformName||"-"}</span>
-                      <span style={{ fontSize:11, color:"#64748b", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{o.memo||"-"}</span>
-                      <span style={{ textAlign:"center", fontWeight:600, color:"#f1f5f9" }}>{o.qty||"-"}벌</span>
-                      <span style={{ textAlign:"center", fontSize:11, color:"#94a3b8" }}>{o.orderedAt||<span style={{color:"#334155"}}>미발주</span>}</span>
-                      <span style={{ textAlign:"center", fontSize:11, color: dl!==null&&dl<0?"#ef4444":dl!==null&&dl<=3?"#f59e0b":"#94a3b8" }}>
-                        {o.expectedAt||<span style={{color:"#334155"}}>-</span>}
-                      </span>
-                      <span style={{ textAlign:"center", fontWeight:700, fontSize:13,
-                        color: dl===null?"#334155":dl<0?"#ef4444":dl===0?"#f97316":dl<=3?"#f59e0b":"#64748b"
-                      }}>
-                        {dl===null?"-":dl<0?`D+${Math.abs(dl)}`:dl===0?"D-Day":`D-${dl}`}
-                      </span>
-                      <span style={{ textAlign:"center" }}>
-                        <select value={o.status} onChange={e=>markStep(o.id,e.target.value)}
-                          style={{ background:st.bg, border:`1px solid ${st.color}`, color:st.color, borderRadius:6, padding:"3px 6px", fontSize:11, fontWeight:600, cursor:"pointer", outline:"none", maxWidth:90 }}>
-                          {GO_STEPS.filter(s=>s.key!=="arrived").map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
-                        </select>
-                      </span>
-                      <div style={{ display:"flex", gap:4, justifyContent:"center", flexWrap:"wrap" }}>
-                        <SBtn onClick={()=>setEditId(o.id)} color="#1e3a5f">수정</SBtn>
-                        <SBtn onClick={()=>markArrived(o.id)} color="#064e3b">✅ 입고완료</SBtn>
-                        <SBtn onClick={()=>delGO(o.id)} color="#7f1d1d">🗑</SBtn>
+            : isMob
+              /* ── 모바일 카드 뷰 ── */
+              ? <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  {pending.map(o => {
+                    const dl = diffDays(o.expectedAt);
+                    const st = GO_STEPS.find(s=>s.key===o.status)||GO_STEPS[0];
+                    const overdue = dl !== null && dl < 0;
+                    const soon    = dl !== null && dl >= 0 && dl <= 3;
+                    return (
+                      <div key={o.id} style={{ background:"#111827", borderRadius:12, border:`1px solid ${overdue?"#ef4444":soon?"#f59e0b":"#1e293b"}`,
+                        padding:14, display:"flex", flexDirection:"column", gap:10 }}>
+                        {/* row 1: 거래처 + D-day */}
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                          <div>
+                            <div style={{ fontWeight:700, fontSize:15, color:"#f1f5f9" }}>{o.customer||"-"}</div>
+                            <div style={{ fontSize:12, color:"#94a3b8", marginTop:2 }}>{o.uniformName||"-"} {o.qty?`· ${o.qty}벌`:""}</div>
+                          </div>
+                          <div style={{ textAlign:"right" }}>
+                            <div style={{ fontWeight:800, fontSize:20,
+                              color:dl===null?"#334155":dl<0?"#ef4444":dl===0?"#f97316":dl<=3?"#f59e0b":"#64748b" }}>
+                              {dl===null?"-":dl<0?`D+${Math.abs(dl)}`:dl===0?"D-Day":`D-${dl}`}
+                            </div>
+                            <div style={{ fontSize:10, color:"#64748b" }}>{o.expectedAt||"납기 미정"}</div>
+                          </div>
+                        </div>
+                        {/* row 2: 발주일 + 상태 */}
+                        <div style={{ display:"flex", alignItems:"center", gap:8, flexWrap:"wrap" }}>
+                          <span style={{ fontSize:11, color:"#64748b" }}>발주 {o.orderedAt||"미정"}</span>
+                          <select value={o.status} onChange={e=>markStep(o.id,e.target.value)}
+                            style={{ background:st.bg, border:`1px solid ${st.color}`, color:st.color, borderRadius:6,
+                              padding:"4px 8px", fontSize:12, fontWeight:600, cursor:"pointer", outline:"none", marginLeft:"auto" }}>
+                            {GO_STEPS.filter(s=>s.key!=="arrived").map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
+                          </select>
+                        </div>
+                        {o.memo && <div style={{ fontSize:11, color:"#64748b", background:"#1e293b", borderRadius:6, padding:"5px 8px" }}>{o.memo}</div>}
+                        {/* row 3: 버튼 */}
+                        <div style={{ display:"flex", gap:8 }}>
+                          <SBtn onClick={()=>setEditId(o.id)} color="#1e3a5f" full>수정</SBtn>
+                          <SBtn onClick={()=>markArrived(o.id)} color="#064e3b" full>✅ 입고완료</SBtn>
+                          <SBtn onClick={()=>delGO(o.id)} color="#7f1d1d">🗑</SBtn>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )
+                    );
+                  })}
+                </div>
+              /* ── PC 테이블 뷰 ── */
+              : <div style={GS.tbl}>
+                  <div style={{ display:"grid", gridTemplateColumns:"120px 130px 1fr 80px 100px 100px 100px 90px 180px", gap:6, padding:"9px 14px", background:"#0b0f1a", fontSize:10, fontWeight:600, color:"#64748b", textTransform:"uppercase", letterSpacing:"0.4px" }}>
+                    <span>거래처명</span><span>유니폼명</span><span>메모</span>
+                    <span style={{textAlign:"center"}}>수량</span><span style={{textAlign:"center"}}>발주일</span>
+                    <span style={{textAlign:"center"}}>예상납기</span><span style={{textAlign:"center"}}>D-day</span>
+                    <span style={{textAlign:"center"}}>상태</span><span style={{textAlign:"center"}}>관리</span>
+                  </div>
+                  {pending.map(o => {
+                    const dl = diffDays(o.expectedAt);
+                    const st = GO_STEPS.find(s=>s.key===o.status)||GO_STEPS[0];
+                    return (
+                      <div key={o.id} style={{ display:"grid", gridTemplateColumns:"120px 130px 1fr 80px 100px 100px 100px 90px 180px",
+                        gap:6, padding:"10px 14px", borderTop:"1px solid #1e293b", alignItems:"center", fontSize:12,
+                        background: dl !== null && dl < 0 ? "rgba(239,68,68,0.06)" : dl !== null && dl <= 3 ? "rgba(245,158,11,0.04)" : "" }}>
+                        <span style={{ fontWeight:600, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{o.customer||"-"}</span>
+                        <span style={{ color:"#94a3b8", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{o.uniformName||"-"}</span>
+                        <span style={{ fontSize:11, color:"#64748b", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{o.memo||"-"}</span>
+                        <span style={{ textAlign:"center", fontWeight:600 }}>{o.qty||"-"}벌</span>
+                        <span style={{ textAlign:"center", fontSize:11, color:"#94a3b8" }}>{o.orderedAt||"미발주"}</span>
+                        <span style={{ textAlign:"center", fontSize:11, color:dl!==null&&dl<0?"#ef4444":dl!==null&&dl<=3?"#f59e0b":"#94a3b8" }}>{o.expectedAt||"-"}</span>
+                        <span style={{ textAlign:"center", fontWeight:700, fontSize:13,
+                          color:dl===null?"#334155":dl<0?"#ef4444":dl===0?"#f97316":dl<=3?"#f59e0b":"#64748b" }}>
+                          {dl===null?"-":dl<0?`D+${Math.abs(dl)}`:dl===0?"D-Day":`D-${dl}`}
+                        </span>
+                        <span style={{ textAlign:"center" }}>
+                          <select value={o.status} onChange={e=>markStep(o.id,e.target.value)}
+                            style={{ background:st.bg, border:`1px solid ${st.color}`, color:st.color, borderRadius:6, padding:"3px 6px", fontSize:11, fontWeight:600, cursor:"pointer", outline:"none", maxWidth:90 }}>
+                            {GO_STEPS.filter(s=>s.key!=="arrived").map(s=><option key={s.key} value={s.key}>{s.label}</option>)}
+                          </select>
+                        </span>
+                        <div style={{ display:"flex", gap:4, justifyContent:"center", flexWrap:"wrap" }}>
+                          <SBtn onClick={()=>setEditId(o.id)} color="#1e3a5f">수정</SBtn>
+                          <SBtn onClick={()=>markArrived(o.id)} color="#064e3b">✅ 입고</SBtn>
+                          <SBtn onClick={()=>delGO(o.id)} color="#7f1d1d">🗑</SBtn>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
           }
         </div>
       )}
 
-      {/* ARRIVED TABLE */}
+      {/* ARRIVED */}
       {viewTab === "arrived" && (
         <div style={{ marginTop:12 }}>
           {arrived.length === 0
             ? <EmptyState icon="📦" msg="입고완료 내역이 없습니다"/>
-            : (
-              <div style={GS.tbl}>
-                <div style={{ display:"grid", gridTemplateColumns:"130px 150px 1fr 80px 110px 110px 110px 90px", gap:6, padding:"9px 14px", background:"#0b0f1a", fontSize:10, fontWeight:600, color:"#64748b", textTransform:"uppercase", letterSpacing:"0.4px" }}>
-                  <span>거래처명</span><span>유니폼명</span><span>메모</span><span style={{textAlign:"center"}}>수량</span>
-                  <span style={{textAlign:"center"}}>발주일</span><span style={{textAlign:"center"}}>예상 납기일</span><span style={{textAlign:"center"}}>실제 입고일</span><span style={{textAlign:"center"}}>관리</span>
-                </div>
-                {arrived.map(o => {
-                  const diffA = o.orderedAt && o.arrivedAt ? Math.ceil((new Date(o.arrivedAt)-new Date(o.orderedAt))/86400000) : null;
-                  const onTime = o.expectedAt && o.arrivedAt ? o.arrivedAt <= o.expectedAt : null;
-                  return (
-                    <div key={o.id} style={{ display:"grid", gridTemplateColumns:"130px 150px 1fr 80px 110px 110px 110px 90px", gap:6, padding:"9px 14px", borderTop:"1px solid #1e293b", alignItems:"center", fontSize:12, background:"rgba(16,185,129,0.02)" }}>
-                      <span style={{ fontWeight:600 }}>{o.customer||"-"}</span>
-                      <span style={{ color:"#94a3b8" }}>{o.uniformName||"-"}</span>
-                      <span style={{ fontSize:11, color:"#64748b" }}>{o.memo||"-"}</span>
-                      <span style={{ textAlign:"center", fontWeight:600 }}>{o.qty||"-"}벌</span>
-                      <span style={{ textAlign:"center", fontSize:11, color:"#64748b" }}>{o.orderedAt||"-"}</span>
-                      <span style={{ textAlign:"center", fontSize:11, color:"#64748b" }}>{o.expectedAt||"-"}</span>
-                      <span style={{ textAlign:"center" }}>
-                        <span style={{ fontWeight:600, color:"#10b981" }}>{o.arrivedAt||"-"}</span>
-                        {onTime !== null && (
-                          <span style={{ marginLeft:5, fontSize:10, color:onTime?"#6ee7b7":"#fca5a5" }}>
-                            {onTime ? "✓ 정시" : "⚠ 지연"}
-                          </span>
-                        )}
-                      </span>
-                      <div style={{ textAlign:"center" }}>
-                        <SBtn onClick={()=>delGO(o.id)} color="#7f1d1d">🗑</SBtn>
+            : isMob
+              /* 모바일 카드 */
+              ? <div style={{ display:"flex", flexDirection:"column", gap:10 }}>
+                  {arrived.map(o => {
+                    const onTime = o.expectedAt && o.arrivedAt ? o.arrivedAt <= o.expectedAt : null;
+                    return (
+                      <div key={o.id} style={{ background:"rgba(16,185,129,0.04)", borderRadius:12, border:"1px solid #1e293b", padding:14 }}>
+                        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:8 }}>
+                          <div>
+                            <div style={{ fontWeight:700, fontSize:15 }}>{o.customer||"-"}</div>
+                            <div style={{ fontSize:12, color:"#94a3b8" }}>{o.uniformName||"-"} {o.qty?`· ${o.qty}벌`:""}</div>
+                          </div>
+                          <div style={{ textAlign:"right" }}>
+                            <div style={{ fontWeight:700, color:"#10b981", fontSize:14 }}>{o.arrivedAt||"-"}</div>
+                            {onTime !== null && <div style={{ fontSize:10, color:onTime?"#6ee7b7":"#fca5a5" }}>{onTime?"✓ 정시입고":"⚠ 지연입고"}</div>}
+                          </div>
+                        </div>
+                        <div style={{ fontSize:11, color:"#64748b", display:"flex", gap:12 }}>
+                          <span>발주 {o.orderedAt||"-"}</span>
+                          <span>납기예정 {o.expectedAt||"-"}</span>
+                        </div>
+                        <div style={{ marginTop:8, display:"flex", justifyContent:"flex-end" }}>
+                          <SBtn onClick={()=>delGO(o.id)} color="#7f1d1d">🗑 삭제</SBtn>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )
+                    );
+                  })}
+                </div>
+              /* PC 테이블 */
+              : <div style={GS.tbl}>
+                  <div style={{ display:"grid", gridTemplateColumns:"130px 150px 1fr 80px 110px 110px 110px 90px", gap:6, padding:"9px 14px", background:"#0b0f1a", fontSize:10, fontWeight:600, color:"#64748b", textTransform:"uppercase", letterSpacing:"0.4px" }}>
+                    <span>거래처명</span><span>유니폼명</span><span>메모</span><span style={{textAlign:"center"}}>수량</span>
+                    <span style={{textAlign:"center"}}>발주일</span><span style={{textAlign:"center"}}>예상납기</span><span style={{textAlign:"center"}}>실제입고일</span><span style={{textAlign:"center"}}>관리</span>
+                  </div>
+                  {arrived.map(o => {
+                    const onTime = o.expectedAt && o.arrivedAt ? o.arrivedAt <= o.expectedAt : null;
+                    return (
+                      <div key={o.id} style={{ display:"grid", gridTemplateColumns:"130px 150px 1fr 80px 110px 110px 110px 90px", gap:6, padding:"9px 14px", borderTop:"1px solid #1e293b", alignItems:"center", fontSize:12, background:"rgba(16,185,129,0.02)" }}>
+                        <span style={{ fontWeight:600 }}>{o.customer||"-"}</span>
+                        <span style={{ color:"#94a3b8" }}>{o.uniformName||"-"}</span>
+                        <span style={{ fontSize:11, color:"#64748b" }}>{o.memo||"-"}</span>
+                        <span style={{ textAlign:"center", fontWeight:600 }}>{o.qty||"-"}벌</span>
+                        <span style={{ textAlign:"center", fontSize:11, color:"#64748b" }}>{o.orderedAt||"-"}</span>
+                        <span style={{ textAlign:"center", fontSize:11, color:"#64748b" }}>{o.expectedAt||"-"}</span>
+                        <span style={{ textAlign:"center" }}>
+                          <span style={{ fontWeight:600, color:"#10b981" }}>{o.arrivedAt||"-"}</span>
+                          {onTime !== null && <span style={{ marginLeft:5, fontSize:10, color:onTime?"#6ee7b7":"#fca5a5" }}>{onTime?"✓ 정시":"⚠ 지연"}</span>}
+                        </span>
+                        <div style={{ textAlign:"center" }}><SBtn onClick={()=>delGO(o.id)} color="#7f1d1d">🗑</SBtn></div>
+                      </div>
+                    );
+                  })}
+                </div>
           }
         </div>
       )}
