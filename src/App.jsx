@@ -122,15 +122,35 @@ function Loading() {
 }
 
 /* ═══════════════════════════════════════════════════════
-   LOGIN SCREEN  (카카오 스타일)
+   LOGIN SCREEN  (카카오 실제 연동)
 ═══════════════════════════════════════════════════════ */
+
+// 카카오 SDK 동적 로드
+const KAKAO_JS_KEY = "349e73eae2fbba62ebfd4369f85b7c2b";
+function loadKakaoSDK() {
+  return new Promise((resolve) => {
+    if (window.Kakao) { resolve(); return; }
+    const s = document.createElement("script");
+    s.src = "https://t1.kakaocdn.net/kakao_js_sdk/2.7.2/kakao.min.js";
+    s.crossOrigin = "anonymous";
+    s.onload = () => {
+      if (!window.Kakao.isInitialized()) window.Kakao.init(KAKAO_JS_KEY);
+      resolve();
+    };
+    document.head.appendChild(s);
+  });
+}
+
 function LoginScreen({ onLogin }) {
-  const [step, setStep]   = useState("main");  // main | phone | code
-  const [phone, setPhone] = useState("");
-  const [code, setCode]   = useState("");
+  const [step, setStep]       = useState("main");
+  const [phone, setPhone]     = useState("");
+  const [code, setCode]       = useState("");
   const [loading, setLoading] = useState(false);
-  const [err, setErr]     = useState("");
+  const [err, setErr]         = useState("");
   const mockCode = "1234";
+
+  // SDK 미리 로드
+  useEffect(() => { loadKakaoSDK(); }, []);
 
   const sendCode = () => {
     if (!phone.trim()) { setErr("전화번호를 입력해주세요."); return; }
@@ -147,12 +167,56 @@ function LoginScreen({ onLogin }) {
     }, 800);
   };
 
-  const kakaoLogin = () => {
-    setLoading(true);
-    setTimeout(() => {
-      onLogin({ name:"카카오 사용자", phone:"", loginAt: new Date().toISOString(), avatar:"🟡", provider:"kakao" });
+  const kakaoLogin = async () => {
+    setLoading(true); setErr("");
+    try {
+      await loadKakaoSDK();
+      window.Kakao.Auth.login({
+        success: async (authObj) => {
+          try {
+            // 사용자 정보 요청
+            window.Kakao.API.request({
+              url: "/v2/user/me",
+              success: (res) => {
+                const profile = res.kakao_account?.profile;
+                const name = profile?.nickname || "카카오 사용자";
+                const avatar = profile?.profile_image_url || "🟡";
+                onLogin({
+                  name,
+                  avatar,
+                  phone: "",
+                  loginAt: new Date().toISOString(),
+                  provider: "kakao",
+                  kakaoId: res.id,
+                });
+                setLoading(false);
+              },
+              fail: () => {
+                // 프로필 못가져와도 로그인은 허용
+                onLogin({
+                  name: "카카오 사용자",
+                  avatar: "🟡",
+                  phone: "",
+                  loginAt: new Date().toISOString(),
+                  provider: "kakao",
+                });
+                setLoading(false);
+              }
+            });
+          } catch(e) {
+            setErr("사용자 정보를 가져오지 못했습니다."); setLoading(false);
+          }
+        },
+        fail: (err) => {
+          console.error(err);
+          setErr("카카오 로그인에 실패했습니다. 다시 시도해주세요.");
+          setLoading(false);
+        }
+      });
+    } catch(e) {
+      setErr("카카오 SDK 로드 실패. 잠시 후 다시 시도해주세요.");
       setLoading(false);
-    }, 1500);
+    }
   };
 
   return (
@@ -169,7 +233,7 @@ function LoginScreen({ onLogin }) {
           <div style={LS.form}>
             {/* KAKAO LOGIN */}
             <button onClick={kakaoLogin} disabled={loading} style={LS.kakaoBtn}>
-              {loading ? <span style={LS.spinner}>⏳</span> : (
+              {loading ? <span>로그인 중...</span> : (
                 <>
                   <span style={LS.kakaoBtnIcon}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="black">
@@ -181,14 +245,12 @@ function LoginScreen({ onLogin }) {
               )}
             </button>
 
+            {err && <div style={LS.err}>{err}</div>}
+
             <div style={LS.divider}><span>또는</span></div>
 
             {/* PHONE LOGIN */}
             <button onClick={()=>setStep("phone")} style={LS.phoneBtn}>📱 전화번호로 로그인</button>
-
-            <div style={LS.notice}>
-              ※ 실제 운영 시 카카오 개발자 콘솔에서<br/>OAuth 앱 등록 후 실제 인증이 연동됩니다.
-            </div>
           </div>
         )}
 
