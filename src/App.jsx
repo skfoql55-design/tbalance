@@ -11,11 +11,22 @@ const td  = () => new Date().toISOString().slice(0,10);
 const fmt = n => Number(n||0).toLocaleString("ko-KR");
 const won = n => fmt(n)+"원";
 
+// CSV 내보내기
+const exportCSV = (filename, headers, rows) => {
+  const BOM = "\uFEFF";
+  const lines = [headers.join(","), ...rows.map(r => r.map(c => `"${String(c??"-").replace(/"/g,'""')}"`).join(","))];
+  const blob = new Blob([BOM + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename;
+  a.click(); URL.revokeObjectURL(url);
+};
+
 /* ═══════════════════════════════════════════════════════
    CONSTANTS
 ═══════════════════════════════════════════════════════ */
 const NAV_ITEMS = [
   { id:"grouporders",icon:"🚚", label:"단체복 주문 현황" },
+  { id:"calendar",  icon:"📅", label:"납기일 캘린더" },
   { id:"design",    icon:"🎨", label:"등판 시안 제작" },
   { id:"inventory", icon:"📦", label:"재고 관리" },
   { id:"sales",     icon:"📊", label:"매출 관리" },
@@ -375,7 +386,7 @@ function MainApp({ user, onLogout }) {
   // ── BOTTOM NAV items (모바일: 자주쓰는 5개 + 더보기) ──
   const BOT_NAV = [
     { id:"grouporders", icon:"🚚", label:"주문현황" },
-    { id:"orders",      icon:"📋", label:"명단관리" },
+    { id:"calendar",    icon:"📅", label:"캘린더" },
     { id:"payments",    icon:"💳", label:"입금확인" },
     { id:"sales",       icon:"📊", label:"매출" },
     { id:"__more__",    icon:"☰",  label:"더보기" },
@@ -486,8 +497,12 @@ function MainApp({ user, onLogout }) {
               {curItem?.icon} {curItem?.label}
             </div>
           </div>
-          <div style={{ fontSize:11, color:"#64748b" }}>
-            {new Date().toLocaleDateString("ko-KR",{month:"short",day:"numeric",weekday:"short"})}
+          <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+            {/* 알림 벨 */}
+            <NotifBell payments={payments} groupOrders={groupOrders} onGoPage={goPage}/>
+            <div style={{ fontSize:11, color:"#64748b" }}>
+              {new Date().toLocaleDateString("ko-KR",{month:"short",day:"numeric",weekday:"short"})}
+            </div>
           </div>
         </div>
 
@@ -495,6 +510,7 @@ function MainApp({ user, onLogout }) {
         <div style={{ flex:1, overflowY:"auto", padding: isMobile ? 12 : 20,
           paddingBottom: isMobile ? 80 : 20 }}>
           {page==="grouporders"&& <GroupOrdersPage db={db} isMobile={isMobile}/>}
+          {page==="calendar"   && <CalendarPage db={db} isMobile={isMobile}/>}
           {page==="design"    && <DesignTool isMobile={isMobile}/>}
           {page==="inventory" && <InventoryPage db={db} isMobile={isMobile}/>}
           {page==="sales"     && <SalesPage db={db} isMobile={isMobile}/>}
@@ -882,6 +898,314 @@ function SumPill({label,val,color}){ return <div style={{background:"#1e293b",bo
 function StatBadge({label,val,color}){ return <div style={{background:"#1e293b",border:`1px solid ${color}33`,borderRadius:8,padding:"6px 12px",textAlign:"center"}}><div style={{fontSize:9,color:"#64748b"}}>{label}</div><div style={{fontSize:13,fontWeight:700,color,marginTop:1}}>{val}</div></div>; }
 
 /* ═══════════════════════════════════════════════════════
+   알림 벨 컴포넌트
+═══════════════════════════════════════════════════════ */
+function NotifBell({ payments, groupOrders, onGoPage }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  const unpaid = (payments||[]).filter(p => !p.paid);
+  const overdue = (groupOrders||[]).filter(o => {
+    if (o.status === "arrived" || !o.expectedAt) return false;
+    return diffDays(o.expectedAt) < 0;
+  });
+  const soon = (groupOrders||[]).filter(o => {
+    if (o.status === "arrived" || !o.expectedAt) return false;
+    const d = diffDays(o.expectedAt);
+    return d >= 0 && d <= 3;
+  });
+
+  const total = unpaid.length + overdue.length + soon.length;
+
+  useEffect(() => {
+    const fn = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", fn);
+    return () => document.removeEventListener("mousedown", fn);
+  }, []);
+
+  return (
+    <div ref={ref} style={{ position:"relative" }}>
+      <button onClick={() => setOpen(p => !p)} style={{
+        background: total > 0 ? "rgba(239,68,68,0.15)" : "rgba(255,255,255,0.05)",
+        border: `1px solid ${total > 0 ? "#ef4444" : "#334155"}`,
+        borderRadius: 8, padding:"5px 10px", cursor:"pointer", position:"relative",
+        color: total > 0 ? "#fca5a5" : "#64748b", fontSize:16, lineHeight:1
+      }}>
+        🔔
+        {total > 0 && (
+          <span style={{ position:"absolute", top:-6, right:-6, background:"#ef4444", color:"white",
+            borderRadius:10, padding:"0 5px", fontSize:10, fontWeight:700, minWidth:16, textAlign:"center" }}>
+            {total}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div style={{ position:"absolute", right:0, top:"calc(100% + 8px)", width:300,
+          background:"#111827", border:"1px solid #1e293b", borderRadius:12, zIndex:500,
+          boxShadow:"0 8px 32px rgba(0,0,0,0.5)", overflow:"hidden" }}>
+          <div style={{ padding:"12px 14px", borderBottom:"1px solid #1e293b", fontWeight:600, fontSize:13 }}>
+            🔔 알림 {total > 0 ? `(${total})` : ""}
+          </div>
+          <div style={{ maxHeight:380, overflowY:"auto" }}>
+            {total === 0 && (
+              <div style={{ padding:"24px", textAlign:"center", color:"#64748b", fontSize:13 }}>
+                ✅ 알림이 없습니다
+              </div>
+            )}
+            {overdue.length > 0 && (
+              <div>
+                <div style={{ padding:"8px 14px", fontSize:10, fontWeight:700, color:"#ef4444",
+                  background:"rgba(239,68,68,0.08)", textTransform:"uppercase" }}>🚨 납기 초과</div>
+                {overdue.map(o => (
+                  <div key={o.id} onClick={() => { onGoPage("grouporders"); setOpen(false); }}
+                    style={{ padding:"10px 14px", borderBottom:"1px solid #1e293b", cursor:"pointer",
+                      display:"flex", justifyContent:"space-between", alignItems:"center" }}
+                    onMouseEnter={e=>e.currentTarget.style.background="#1e293b"}
+                    onMouseLeave={e=>e.currentTarget.style.background=""}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:600 }}>{o.customer}</div>
+                      <div style={{ fontSize:11, color:"#94a3b8" }}>{o.uniformName} · 납기 {o.expectedAt}</div>
+                    </div>
+                    <span style={{ color:"#ef4444", fontWeight:700, fontSize:12 }}>
+                      D+{Math.abs(diffDays(o.expectedAt))}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {soon.length > 0 && (
+              <div>
+                <div style={{ padding:"8px 14px", fontSize:10, fontWeight:700, color:"#f59e0b",
+                  background:"rgba(245,158,11,0.08)", textTransform:"uppercase" }}>⚠️ 3일 이내 납기</div>
+                {soon.map(o => (
+                  <div key={o.id} onClick={() => { onGoPage("grouporders"); setOpen(false); }}
+                    style={{ padding:"10px 14px", borderBottom:"1px solid #1e293b", cursor:"pointer",
+                      display:"flex", justifyContent:"space-between", alignItems:"center" }}
+                    onMouseEnter={e=>e.currentTarget.style.background="#1e293b"}
+                    onMouseLeave={e=>e.currentTarget.style.background=""}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:600 }}>{o.customer}</div>
+                      <div style={{ fontSize:11, color:"#94a3b8" }}>{o.uniformName}</div>
+                    </div>
+                    <span style={{ color:"#f59e0b", fontWeight:700, fontSize:12 }}>
+                      D-{diffDays(o.expectedAt)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            {unpaid.length > 0 && (
+              <div>
+                <div style={{ padding:"8px 14px", fontSize:10, fontWeight:700, color:"#a78bfa",
+                  background:"rgba(167,139,250,0.08)", textTransform:"uppercase" }}>💳 미수금</div>
+                {unpaid.slice(0, 5).map(p => (
+                  <div key={p.id} onClick={() => { onGoPage("payments"); setOpen(false); }}
+                    style={{ padding:"10px 14px", borderBottom:"1px solid #1e293b", cursor:"pointer",
+                      display:"flex", justifyContent:"space-between", alignItems:"center" }}
+                    onMouseEnter={e=>e.currentTarget.style.background="#1e293b"}
+                    onMouseLeave={e=>e.currentTarget.style.background=""}>
+                    <div>
+                      <div style={{ fontSize:13, fontWeight:600 }}>{p.customerName}</div>
+                      <div style={{ fontSize:11, color:"#94a3b8" }}>{p.detail||"-"}</div>
+                    </div>
+                    <span style={{ color:"#ef4444", fontWeight:700, fontSize:12 }}>{won(p.amount)}</span>
+                  </div>
+                ))}
+                {unpaid.length > 5 && (
+                  <div style={{ padding:"8px 14px", fontSize:11, color:"#64748b", textAlign:"center" }}>
+                    외 {unpaid.length - 5}건 더보기
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   📅 캘린더 뷰 페이지
+═══════════════════════════════════════════════════════ */
+function CalendarPage({ db, isMobile }) {
+  const { groupOrders } = db;
+  const today = new Date();
+  const [yr, setYr] = useState(today.getFullYear());
+  const [mo, setMo] = useState(today.getMonth()); // 0-indexed
+  const [sel, setSel] = useState(null);
+
+  const firstDay = new Date(yr, mo, 1).getDay();
+  const daysInMonth = new Date(yr, mo + 1, 0).getDate();
+  const todayStr = td();
+
+  // 이번 달 날짜별 주문 맵
+  const orderMap = useMemo(() => {
+    const map = {};
+    (groupOrders || []).forEach(o => {
+      if (!o.expectedAt) return;
+      const [oy, om] = o.expectedAt.split("-").map(Number);
+      if (oy === yr && om === mo + 1) {
+        const day = parseInt(o.expectedAt.split("-")[2]);
+        if (!map[day]) map[day] = [];
+        map[day].push(o);
+      }
+    });
+    return map;
+  }, [groupOrders, yr, mo]);
+
+  const prevMonth = () => { if (mo === 0) { setYr(y=>y-1); setMo(11); } else setMo(m=>m-1); setSel(null); };
+  const nextMonth = () => { if (mo === 11) { setYr(y=>y+1); setMo(0); } else setMo(m=>m+1); setSel(null); };
+
+  const selOrders = sel ? (orderMap[sel] || []) : [];
+  const DAYS = ["일","월","화","수","목","금","토"];
+
+  // 이번 달 전체 주문 요약
+  const monthOrders = Object.values(orderMap).flat();
+  const overdueInMonth = monthOrders.filter(o => o.status !== "arrived" && diffDays(o.expectedAt) < 0);
+
+  return (
+    <div>
+      {/* 헤더 */}
+      <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between", marginBottom:16 }}>
+        <button onClick={prevMonth} style={{ background:"#1e293b", border:"1px solid #334155", color:"#f1f5f9",
+          borderRadius:8, padding:"7px 14px", cursor:"pointer", fontSize:16 }}>‹</button>
+        <div style={{ textAlign:"center" }}>
+          <div style={{ fontSize:18, fontWeight:700, color:"#f1f5f9" }}>{yr}년 {mo+1}월</div>
+          <div style={{ fontSize:11, color:"#64748b", marginTop:2 }}>
+            납기 {monthOrders.length}건 {overdueInMonth.length > 0 ? `· 초과 ${overdueInMonth.length}건` : ""}
+          </div>
+        </div>
+        <button onClick={nextMonth} style={{ background:"#1e293b", border:"1px solid #334155", color:"#f1f5f9",
+          borderRadius:8, padding:"7px 14px", cursor:"pointer", fontSize:16 }}>›</button>
+      </div>
+
+      {/* 범례 */}
+      <div style={{ display:"flex", gap:12, marginBottom:12, fontSize:11, color:"#94a3b8", flexWrap:"wrap" }}>
+        <span>🔴 납기초과</span><span>🟡 3일이내</span><span>🔵 진행중</span><span>🟢 입고완료</span>
+      </div>
+
+      {/* 캘린더 그리드 */}
+      <div style={{ background:"#111827", borderRadius:14, border:"1px solid #1e293b", overflow:"hidden" }}>
+        {/* 요일 헤더 */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)", background:"#0b0f1a" }}>
+          {DAYS.map((d,i) => (
+            <div key={d} style={{ padding:"10px 0", textAlign:"center", fontSize:11, fontWeight:600,
+              color: i===0?"#ef4444":i===6?"#3b82f6":"#64748b" }}>{d}</div>
+          ))}
+        </div>
+        {/* 날짜 셀 */}
+        <div style={{ display:"grid", gridTemplateColumns:"repeat(7,1fr)" }}>
+          {Array.from({ length: firstDay }).map((_, i) => (
+            <div key={`e${i}`} style={{ minHeight: isMobile?50:70, borderTop:"1px solid #1e293b" }}/>
+          ))}
+          {Array.from({ length: daysInMonth }).map((_, i) => {
+            const day = i + 1;
+            const dateStr = `${yr}-${String(mo+1).padStart(2,"0")}-${String(day).padStart(2,"0")}`;
+            const dayOrders = orderMap[day] || [];
+            const isToday = dateStr === todayStr;
+            const isSelected = sel === day;
+            const dayOfWeek = (firstDay + i) % 7;
+
+            const hasDone    = dayOrders.some(o => o.status === "arrived");
+            const hasOverdue = dayOrders.some(o => o.status !== "arrived" && diffDays(o.expectedAt) < 0);
+            const hasSoon    = dayOrders.some(o => o.status !== "arrived" && diffDays(o.expectedAt) >= 0 && diffDays(o.expectedAt) <= 3);
+            const hasNormal  = dayOrders.some(o => o.status !== "arrived" && diffDays(o.expectedAt) > 3);
+
+            return (
+              <div key={day} onClick={() => setSel(sel === day ? null : day)}
+                style={{
+                  minHeight: isMobile?50:70, borderTop:"1px solid #1e293b",
+                  borderLeft: (firstDay + i) % 7 !== 0 ? "1px solid #1e293b" : "none",
+                  padding: isMobile?"4px":"6px", cursor: dayOrders.length > 0 ? "pointer" : "default",
+                  background: isSelected ? "#1e293b" : isToday ? "rgba(59,130,246,0.08)" : "",
+                  transition:"background 0.1s"
+                }}>
+                <div style={{
+                  width:24, height:24, borderRadius:"50%", display:"flex", alignItems:"center",
+                  justifyContent:"center", fontSize:12, fontWeight:isToday?700:400, marginBottom:2,
+                  background: isToday ? "#3b82f6" : "transparent",
+                  color: isToday ? "white" : dayOfWeek===0 ? "#ef4444" : dayOfWeek===6 ? "#3b82f6" : "#94a3b8"
+                }}>{day}</div>
+                {/* 주문 도트 */}
+                <div style={{ display:"flex", flexWrap:"wrap", gap:2, marginTop:2 }}>
+                  {hasOverdue && <span style={{ width:7, height:7, borderRadius:"50%", background:"#ef4444", display:"block" }}/>}
+                  {hasSoon    && <span style={{ width:7, height:7, borderRadius:"50%", background:"#f59e0b", display:"block" }}/>}
+                  {hasNormal  && <span style={{ width:7, height:7, borderRadius:"50%", background:"#3b82f6", display:"block" }}/>}
+                  {hasDone    && <span style={{ width:7, height:7, borderRadius:"50%", background:"#10b981", display:"block" }}/>}
+                </div>
+                {/* 모바일: 건수만 표시 */}
+                {dayOrders.length > 0 && isMobile && (
+                  <div style={{ fontSize:9, color:"#64748b", marginTop:1 }}>{dayOrders.length}건</div>
+                )}
+                {/* PC: 주문명 표시 */}
+                {!isMobile && dayOrders.slice(0,2).map((o,idx) => {
+                  const st = GO_STEPS.find(s=>s.key===o.status)||GO_STEPS[0];
+                  const dl = diffDays(o.expectedAt);
+                  const dotColor = o.status==="arrived"?"#10b981":dl<0?"#ef4444":dl<=3?"#f59e0b":"#3b82f6";
+                  return (
+                    <div key={idx} style={{ fontSize:9, color:"#e2e8f0", background: dotColor+"22",
+                      borderLeft:`2px solid ${dotColor}`, borderRadius:"0 3px 3px 0",
+                      padding:"1px 4px", marginTop:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>
+                      {o.customer}
+                    </div>
+                  );
+                })}
+                {!isMobile && dayOrders.length > 2 && (
+                  <div style={{ fontSize:9, color:"#64748b", marginTop:1 }}>+{dayOrders.length-2}건</div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* 선택한 날 상세 */}
+      {sel && selOrders.length > 0 && (
+        <div style={{ marginTop:14 }}>
+          <div style={{ fontSize:13, fontWeight:600, marginBottom:10, color:"#f1f5f9" }}>
+            {mo+1}월 {sel}일 납기 주문 ({selOrders.length}건)
+          </div>
+          <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+            {selOrders.map(o => {
+              const dl = diffDays(o.expectedAt);
+              const st = GO_STEPS.find(s=>s.key===o.status)||GO_STEPS[0];
+              return (
+                <div key={o.id} style={{ background:"#111827", borderRadius:10, padding:12,
+                  border:`1px solid ${dl<0&&o.status!=="arrived"?"#ef4444":"#1e293b"}`,
+                  display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                  <div>
+                    <div style={{ fontWeight:600, fontSize:14 }}>{o.customer}</div>
+                    <div style={{ fontSize:12, color:"#94a3b8", marginTop:2 }}>{o.uniformName} {o.qty?`· ${o.qty}벌`:""}</div>
+                    <div style={{ marginTop:4 }}>
+                      <span style={{ background:st.bg, border:`1px solid ${st.color}`, color:st.color,
+                        borderRadius:5, padding:"2px 7px", fontSize:11, fontWeight:600 }}>{st.label}</span>
+                    </div>
+                  </div>
+                  <div style={{ textAlign:"right" }}>
+                    {o.status === "arrived"
+                      ? <div style={{ color:"#10b981", fontWeight:700 }}>✅ 입고완료</div>
+                      : <div style={{ fontWeight:800, fontSize:18,
+                          color: dl<0?"#ef4444":dl===0?"#f97316":dl<=3?"#f59e0b":"#64748b" }}>
+                          {dl<0?`D+${Math.abs(dl)}`:dl===0?"D-Day":`D-${dl}`}
+                        </div>
+                    }
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+      {sel && selOrders.length === 0 && (
+        <div style={{ marginTop:14, textAlign:"center", color:"#4b5563", padding:20 }}>이 날은 납기 주문이 없습니다</div>
+      )}
+    </div>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
    MODULE 2 — INVENTORY
 ═══════════════════════════════════════════════════════ */
 function InventoryPage({db}){
@@ -1102,12 +1426,21 @@ function SalesPage({db}){
   const allSales=[...uSales,...eSales];
   const unpaidTotal=allSales.filter(s=>!s.paid).reduce((a,s)=>a+Number(s.sales||0),0);
 
+  const exportSales = () => {
+    exportCSV(`매출_${td()}.csv`,
+      ["날짜","구분","거래처","상품명","매출","원가","순이익","결제수단","입금"],
+      allSales.map(s=>[s.date,s.type==="uniform"?"유니폼":"용품",s.customer||"-",s.itemName||"-",s.sales||0,s.cost||0,(s.sales||0)-(s.cost||0),s.payMethod||"-",s.paid?"완료":"미수금"])
+    );
+    toast_("엑셀 파일 저장!");
+  };
+
   return(
     <div>
       <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
         <SBtn onClick={()=>setAdd("uniform")} color="#f59e0b">+ 유니폼 매출</SBtn>
         <SBtn onClick={()=>setAdd("equip")} color="#10b981">+ 용품 매출</SBtn>
         <SBtn onClick={()=>setMsg(true)} color="#6366f1">💬 문자 발송</SBtn>
+        <SBtn onClick={exportSales} color="#0f766e">📊 엑셀 내보내기</SBtn>
         <div style={{marginLeft:"auto",display:"flex",gap:8}}>
           <StatBadge label="미수금" val={won(unpaidTotal)} color={unpaidTotal>0?"#ef4444":"#10b981"}/>
         </div>
@@ -1611,8 +1944,9 @@ function CustModal({initial,onClose,onSave}){
 }
 
 function PaymentsPage({db}){
-  const {payments,customers,sp,toast_}=db;
+  const {payments,customers,templates,sp,toast_}=db;
   const [addM,setAdd]=useState(false); const [filter,setFilter]=useState("전체"); const [search,setSearch]=useState("");
+  const [msgTarget,setMsgTarget]=useState(null);
   const isMob = window.innerWidth < 768;
   const fil=useMemo(()=>payments.filter(p=>{ const f=filter==="전체"||(filter==="미수금"?!p.paid:p.paid); const q=!search||(p.customerName||"").includes(search)||(p.detail||"").includes(search); return f&&q; }),[payments,filter,search]);
   const unAmt=payments.filter(p=>!p.paid).reduce((a,p)=>a+Number(p.amount||0),0);
@@ -1620,7 +1954,16 @@ function PaymentsPage({db}){
   const tog=async id=>{ await sp(payments.map(p=>p.id===id?{...p,paid:!p.paid,paidAt:!p.paid?td():null}:p)); };
   const del=async id=>{ await sp(payments.filter(p=>p.id!==id)); toast_("삭제"); };
   const add=async d=>{ await sp([{...d,id:gid(),createdAt:td()},...payments]); toast_("등록!"); };
-  const gc={gridTemplateColumns:"95px 120px 1fr 100px 80px 75px 100px 80px"};
+  const exportPayments = () => {
+    exportCSV(`입금내역_${td()}.csv`,
+      ["날짜","거래처","내역","금액","결제수단","입금여부","입금일"],
+      payments.map(p=>[p.date,p.customerName||"-",p.detail||"-",p.amount||0,p.payMethod||"-",p.paid?"완료":"미수금",p.paidAt||"-"])
+    );
+    toast_("엑셀 파일 저장!");
+  };
+  // 미수금 문자용 템플릿 자동 선택
+  const unpaidTpl = templates?.find(t=>t.category==="결제") || templates?.[0];
+  const gc={gridTemplateColumns:"95px 120px 1fr 100px 80px 75px 100px 100px"};
   return <div>
     {payments.filter(p=>!p.paid).length>0&&<div style={{display:"flex",gap:10,alignItems:"center",background:"rgba(239,68,68,0.1)",border:"1px solid #ef4444",borderRadius:10,padding:"10px 14px",marginBottom:14}}>
       <span style={{fontSize:20}}>⚠️</span><div><div style={{fontWeight:600,color:"#fca5a5"}}>미수금 알림</div><div style={{fontSize:12,color:"#f87171"}}>{payments.filter(p=>!p.paid).length}건 · 총 {won(unAmt)}</div></div>
@@ -1633,7 +1976,8 @@ function PaymentsPage({db}){
     <div style={GS.toolbar}>
       <div style={GS.chips}>{["전체","미수금","입금완료"].map(f=><div key={f} style={{...SI.chip,...(filter===f?{...SI.chipA,...(f==="미수금"?{background:"#7f1d1d",borderColor:"#ef4444",color:"#fca5a5"}:{})}:{})}} onClick={()=>setFilter(f)}>{f}</div>)}</div>
       <input style={{...GS.sInp,flex:1,maxWidth:isMob?undefined:200}} placeholder="거래처·내역 검색..." value={search} onChange={e=>setSearch(e.target.value)}/>
-      <SBtn onClick={()=>setAdd(true)} color="#3b82f6" style={{marginLeft:"auto"}}>+ 등록</SBtn>
+      <SBtn onClick={exportPayments} color="#0f766e">📊 엑셀</SBtn>
+      <SBtn onClick={()=>setAdd(true)} color="#3b82f6">+ 등록</SBtn>
     </div>
     {fil.length===0?<EmptyState icon="💳" msg="내역 없음"/>:
       isMob
@@ -1651,6 +1995,7 @@ function PaymentsPage({db}){
               <PayTag method={p.payMethod}/>
               {p.paid&&<span style={{fontSize:11,color:"#64748b"}}>입금 {p.paidAt}</span>}
               <div style={{marginLeft:"auto",display:"flex",gap:6}}>
+                {!p.paid && <SBtn onClick={()=>setMsgTarget(p)} color="#4c1d95">💬 문자</SBtn>}
                 <PaidBtn paid={p.paid} onClick={()=>tog(p.id)}/>
                 <SBtn onClick={()=>del(p.id)} color="#7f1d1d">🗑</SBtn>
               </div>
@@ -1667,11 +2012,15 @@ function PaymentsPage({db}){
             <span style={{textAlign:"center"}}><PayTag method={p.payMethod}/></span>
             <span style={{textAlign:"center"}}><PaidBtn paid={p.paid} onClick={()=>tog(p.id)}/></span>
             <span style={{textAlign:"center",fontSize:11,color:"#64748b"}}>{p.paidAt||"-"}</span>
-            <div style={{textAlign:"center"}}><MBtn red onClick={()=>del(p.id)}>삭제</MBtn></div>
+            <div style={{textAlign:"center",display:"flex",gap:3,justifyContent:"center"}}>
+              {!p.paid && <MBtn onClick={()=>setMsgTarget(p)}>💬문자</MBtn>}
+              <MBtn red onClick={()=>del(p.id)}>삭제</MBtn>
+            </div>
           </div>)}
         </div>
     }
     {addM&&<PayModal customers={customers} onClose={()=>setAdd(false)} onSave={d=>{add(d);setAdd(false);}}/>}
+    {msgTarget&&<UnpaidMsgModal payment={msgTarget} templates={templates} onClose={()=>setMsgTarget(null)}/>}
   </div>;
 }
 function PayModal({customers,onClose,onSave}){
@@ -1687,6 +2036,30 @@ function PayModal({customers,onClose,onSave}){
     <MFR label="내역"><input style={GS.inp} value={f.detail} onChange={e=>s("detail",e.target.value)} placeholder="예) 단체복 38벌 등판 제작비"/></MFR>
     <MFR label="입금여부"><div style={GS.chips}><Chip active={f.paid} onClick={()=>s("paid",true)} green>✓ 입금완료</Chip><Chip active={!f.paid} onClick={()=>s("paid",false)} red>미수금</Chip></div></MFR>
     <div style={GS.mBtns}><SBtn onClick={()=>onSave(f)} color="#3b82f6" full>등록</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
+  </Modal>;
+}
+
+function UnpaidMsgModal({ payment, templates, onClose }) {
+  const defMsg = `안녕하세요, ${payment.customerName||"고객"}님!\n주문 금액 ${won(payment.amount)}의 입금이 아직 확인되지 않았습니다.\n${payment.detail ? `내역: ${payment.detail}\n` : ""}확인 후 입금 부탁드립니다.\n감사합니다. 🏓 티밸런스`;
+  const [body, setBody] = useState(defMsg);
+  const [phone, setPhone] = useState("");
+  const [sent, setSent] = useState(false);
+  const send = () => {
+    window.open(`sms:${phone}?body=${encodeURIComponent(body)}`, "_blank");
+    setSent(true);
+  };
+  return <Modal title="💬 미수금 문자 발송" onClose={onClose}>
+    <div style={{background:"rgba(239,68,68,0.08)",border:"1px solid #ef4444",borderRadius:8,padding:"10px 12px",marginBottom:14}}>
+      <div style={{fontSize:12,color:"#fca5a5",fontWeight:600}}>{payment.customerName} · {won(payment.amount)}</div>
+      <div style={{fontSize:11,color:"#f87171",marginTop:2}}>{payment.detail||"-"} · {payment.date}</div>
+    </div>
+    <MFR label="수신 번호"><input style={GS.inp} placeholder="010-0000-0000" value={phone} onChange={e=>setPhone(e.target.value)}/></MFR>
+    <MFR label="메시지 (수정 가능)">
+      <textarea style={{...GS.inp,height:160,resize:"vertical",lineHeight:1.7}} value={body} onChange={e=>setBody(e.target.value)}/>
+      <div style={{fontSize:10,color:"#64748b",marginTop:2}}>{body.length}자</div>
+    </MFR>
+    {sent&&<div style={{background:"rgba(16,185,129,0.1)",border:"1px solid #10b981",borderRadius:6,padding:"7px 10px",color:"#6ee7b7",fontSize:12,marginBottom:6}}>✓ SMS 앱으로 연결됩니다. 앱에서 최종 발송해주세요.</div>}
+    <div style={GS.mBtns}><SBtn onClick={send} color="#4c1d95" full>📱 문자 보내기</SBtn><SBtn onClick={onClose} color="#374151" full>닫기</SBtn></div>
   </Modal>;
 }
 
@@ -1919,6 +2292,18 @@ function GroupOrdersPage({ db }) {
     await updGO(id, { status: "arrived", arrivedAt: td() });
     toast_("입고 완료 처리!");
   };
+  const exportOrders = () => {
+    exportCSV(`단체복주문_${td()}.csv`,
+      ["거래처명","유니폼명","수량","발주일","예상납기","D-day","진행상태","입고일","메모"],
+      groupOrders.map(o => {
+        const dl = diffDays(o.expectedAt);
+        const dStr = dl===null?"-":dl<0?`D+${Math.abs(dl)}`:dl===0?"D-Day":`D-${dl}`;
+        const st = GO_STEPS.find(s=>s.key===o.status)?.label||o.status;
+        return [o.customer||"-",o.uniformName||"-",o.qty||"-",o.orderedAt||"-",o.expectedAt||"-",dStr,st,o.arrivedAt||"-",o.memo||"-"];
+      })
+    );
+    toast_("엑셀 파일 저장!");
+  };
   const markStep = async (id, key) => {
     const patch = { status: key };
     if (key === "ordered" ) {
@@ -1989,6 +2374,7 @@ function GroupOrdersPage({ db }) {
       {/* TOOLBAR */}
       <div style={{ display:"flex", gap:8, marginBottom:12, alignItems:"center" }}>
         <input style={{ ...GS.sInp, flex:1, minWidth:0 }} placeholder="거래처명·유니폼명 검색..." value={search} onChange={e=>setSearch(e.target.value)}/>
+        <SBtn onClick={exportOrders} color="#0f766e">📊 엑셀</SBtn>
         <SBtn onClick={()=>setAdd(true)} color="#f59e0b">+ 등록</SBtn>
       </div>
 
