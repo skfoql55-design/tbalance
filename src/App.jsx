@@ -1253,6 +1253,74 @@ function InventoryPage({db}){
     await sih(nh); toast_(mode==="in"?`입고 +${n}`:`출고 -${n}`);
   };
 
+  // ── CSV 파싱 헬퍼 ──
+  const parseCSV = (text) => {
+    const lines = text.trim().split(/\r?\n/);
+    const headers = lines[0].split(",").map(h=>h.replace(/^"|"$/g,"").trim());
+    return lines.slice(1).filter(l=>l.trim()).map(line=>{
+      // 쉼표 파싱 (따옴표 안 쉼표 보호)
+      const cols = []; let cur="", inQ=false;
+      for(const c of line){ if(c==='"'){inQ=!inQ;}else if(c===","&&!inQ){cols.push(cur.trim());cur="";}else{cur+=c;} }
+      cols.push(cur.trim());
+      const row={};
+      headers.forEach((h,i)=>{ row[h]=(cols[i]||"").replace(/^"|"$/g,"").trim(); });
+      return row;
+    });
+  };
+
+  // ── CSV 임포트 처리 ──
+  const [importMod, setImportMod] = useState(null); // {rows, type}
+  const [dragOver, setDragOver] = useState(false);
+
+  const handleCSVFile = (file) => {
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const rows = parseCSV(e.target.result);
+        if(!rows.length){ toast_("데이터가 없습니다", false); return; }
+        // 유니폼 시트인지 용품 시트인지 판별
+        const keys = Object.keys(rows[0]);
+        const isUniform = keys.includes("유니폼명") || keys.includes("이름");
+        const isEquip   = keys.includes("카테고리") || keys.includes("제품명");
+        const type = isUniform ? "uniform" : isEquip ? "equip" : "uniform";
+        setImportMod({ rows, type, filename: file.name });
+      } catch(err) { toast_("CSV 파싱 오류: "+err.message, false); }
+    };
+    reader.readAsText(file, "UTF-8");
+  };
+
+  const handleDrop = (e) => {
+    e.preventDefault(); setDragOver(false);
+    const file = e.dataTransfer.files[0];
+    if(file && (file.name.endsWith(".csv") || file.name.endsWith(".xlsx"))){
+      handleCSVFile(file);
+    } else { toast_("CSV 파일만 지원합니다", false); }
+  };
+
+  // ── 구글시트 템플릿 다운로드 ──
+  const downloadUniTemplate = () => {
+    exportCSV("티밸런스_유니폼재고_템플릿.csv",
+      ["유니폼명","연도","2XS","XS","S","M","L","XL","2XL","3XL","4XL"],
+      [
+        ["y25-01_스카이웨이브(블루)","2025","0","0","5","10","8","5","3","1","0"],
+        ["y25-02_그라비티(레드&블루)","2025","0","0","3","7","6","4","2","0","0"],
+      ]
+    );
+    toast_("유니폼 템플릿 다운로드!");
+  };
+  const downloadEquipTemplate = () => {
+    exportCSV("티밸런스_용품재고_템플릿.csv",
+      ["카테고리","제품명","색상/규격","그립","재고수량","메모"],
+      [
+        ["라켓","티바 샘소노프 올라운드","기본","FL","5",""],
+        ["러버","테너지05","레드","","10",""],
+        ["공","니타쿠 3스타","흰색","","24","1박스=24개"],
+      ]
+    );
+    toast_("용품 템플릿 다운로드!");
+  };
+
   const totalU=uniforms.reduce((s,u)=>s+Object.values(u.sizes||{}).reduce((a,v)=>a+Number(v||0),0),0);
   const totalE=equips.reduce((s,e)=>s+Number(e.stock||0),0);
   const lowU=uniforms.filter(u=>Object.values(u.sizes||{}).some(v=>Number(v||0)>0&&Number(v||0)<=3));
@@ -1266,6 +1334,47 @@ function InventoryPage({db}){
         <StatBadge label="재고부족 유니폼" val={lowU.length+"종"} color="#f59e0b"/>
         <StatBadge label="품절 용품" val={zeroE.length+"종"} color="#ef4444"/>
       </div>
+
+      {/* ── 구글시트 연동 안내 박스 ── */}
+      <div style={{background:"#0d1117",border:"1px solid #1e3a5f",borderRadius:12,padding:"12px 16px",marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:8}}>
+          <span style={{fontSize:16}}>📊</span>
+          <span style={{fontWeight:600,fontSize:13,color:"#93c5fd"}}>구글시트 연동 가이드</span>
+        </div>
+        <div style={{fontSize:12,color:"#64748b",lineHeight:1.8,marginBottom:10}}>
+          1. 아래 <b style={{color:"#f1f5f9"}}>템플릿 다운로드</b> → 구글 드라이브에 업로드<br/>
+          2. 구글 시트에서 데이터 입력<br/>
+          3. <b style={{color:"#f1f5f9"}}>파일 → 다운로드 → CSV</b> 로 저장<br/>
+          4. 아래 <b style={{color:"#f1f5f9"}}>드래그&드롭 영역</b>에 파일을 올리면 자동 등록!
+        </div>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <SBtn onClick={downloadUniTemplate} color="#1d4ed8">📥 유니폼 템플릿</SBtn>
+          <SBtn onClick={downloadEquipTemplate} color="#065f46">📥 용품 템플릿</SBtn>
+        </div>
+      </div>
+
+      {/* ── CSV 드래그&드롭 영역 ── */}
+      <div
+        onDrop={handleDrop}
+        onDragOver={e=>{e.preventDefault();setDragOver(true);}}
+        onDragLeave={()=>setDragOver(false)}
+        style={{
+          border:`2px dashed ${dragOver?"#3b82f6":"#334155"}`,
+          borderRadius:12, padding:"20px 16px", textAlign:"center",
+          marginBottom:16, cursor:"pointer", transition:"all 0.2s",
+          background: dragOver?"rgba(59,130,246,0.08)":"transparent"
+        }}
+        onClick={()=>{ const inp=document.createElement("input"); inp.type="file"; inp.accept=".csv"; inp.onchange=e=>handleCSVFile(e.target.files[0]); inp.click(); }}
+      >
+        <div style={{fontSize:28,marginBottom:6}}>{dragOver?"⬇️":"📂"}</div>
+        <div style={{fontSize:13,fontWeight:600,color:dragOver?"#93c5fd":"#64748b"}}>
+          {dragOver?"파일을 놓으세요!":"CSV 파일을 여기에 드래그하거나 클릭해서 선택"}
+        </div>
+        <div style={{fontSize:11,color:"#475569",marginTop:4}}>
+          구글시트에서 내보낸 .csv 파일 지원
+        </div>
+      </div>
+
       <div style={{display:"flex",gap:6,marginBottom:16}}>
         {[["uniform","👕 유니폼"],["equip","🏓 용품"],["history","📋 입출고"],["agency","🏪 대리점"]].map(([k,l])=>(
           <div key={k} style={{padding:"7px 14px",borderRadius:8,background:tab===k?"#1e293b":"transparent",border:tab===k?"1px solid #3b82f6":"1px solid #334155",color:tab===k?"#f1f5f9":"#64748b",cursor:"pointer",fontSize:12,fontWeight:500}} onClick={()=>setTab(k)}>{l}</div>
@@ -1365,6 +1474,11 @@ function InventoryPage({db}){
       {eMod==="add"&&<EquipModal onClose={()=>setEM(null)} onSave={d=>{addE(d);setEM(null);}}/>}
       {agMod&&<AgencyModal onClose={()=>setAM(null)} onSave={d=>{addAg(d);setAM(null);}}/>}
       {ioMod&&<IOModal modal={ioMod} agencies={agencies} onClose={()=>setIO(null)} onSave={d=>{doIO(d);setIO(null);}}/>}
+      {importMod&&<CSVImportModal modal={importMod} uniforms={uniforms} equips={equips}
+        onClose={()=>setImportMod(null)}
+        onSaveUniforms={async(arr)=>{ await su([...arr,...uniforms]); toast_(`유니폼 ${arr.length}종 가져오기 완료!`); setImportMod(null); }}
+        onSaveEquips={async(arr)=>{ await se([...arr,...equips]); toast_(`용품 ${arr.length}종 가져오기 완료!`); setImportMod(null); }}
+      />}
     </div>
   );
 }
@@ -1461,6 +1575,116 @@ function IOModal({modal,agencies,onClose,onSave}){
     <MFR label="메모"><input style={GS.inp} value={memo} onChange={e=>setMemo(e.target.value)} placeholder="특이사항"/></MFR>
     <div style={GS.mBtns}><SBtn onClick={()=>onSave({type,itemId:item.id,mode,qty,sizeKey,agencyId,memo,date})} color={mc} full>{mode==="in"?"📥 입고":"📤 출고"} 처리</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
   </Modal>;
+}
+
+function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSaveEquips }) {
+  const { rows, filename } = modal;
+  const keys = Object.keys(rows[0] || {});
+
+  // 타입 자동 감지
+  const isUniform = keys.some(k => ["유니폼명","이름","name"].includes(k));
+  const [type, setType] = useState(isUniform ? "uniform" : "equip");
+
+  // 유니폼 파싱
+  const parsedUniforms = useMemo(() => {
+    if(type !== "uniform") return [];
+    return rows.map(row => {
+      const name = row["유니폼명"] || row["이름"] || row["name"] || "";
+      const year = row["연도"] || row["year"] || String(new Date().getFullYear());
+      // 나머지 컬럼은 사이즈로 처리
+      const sizeKeys = Object.keys(row).filter(k => !["유니폼명","이름","name","연도","year"].includes(k));
+      const sizes = {};
+      sizeKeys.forEach(sz => {
+        const v = Number(row[sz]);
+        if(!isNaN(v) && v > 0) sizes[sz] = v;
+      });
+      return { id: gid(), name, year, imgSrc: null, sizes };
+    }).filter(u => u.name);
+  }, [rows, type]);
+
+  // 용품 파싱
+  const parsedEquips = useMemo(() => {
+    if(type !== "equip") return [];
+    return rows.map(row => ({
+      id: gid(),
+      category: row["카테고리"] || "기타용품",
+      name: row["제품명"] || row["이름"] || row["name"] || "",
+      color: row["색상/규격"] || row["색상"] || "",
+      grip: row["그립"] || "",
+      stock: Number(row["재고수량"] || row["재고"] || row["stock"] || 0),
+      memo: row["메모"] || "",
+    })).filter(e => e.name);
+  }, [rows, type]);
+
+  const preview = type === "uniform" ? parsedUniforms : parsedEquips;
+  const dupUniforms = parsedUniforms.filter(p => uniforms.some(u => u.name === p.name));
+  const dupEquips   = parsedEquips.filter(p => equips.some(e => e.name === p.name));
+  const dups = type === "uniform" ? dupUniforms : dupEquips;
+
+  return (
+    <Modal title="📊 구글시트 CSV 가져오기" onClose={onClose} wide>
+      {/* 파일명 */}
+      <div style={{background:"#1e293b",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12,color:"#94a3b8"}}>
+        📄 {filename} · {rows.length}행 감지
+      </div>
+
+      {/* 타입 선택 */}
+      <MFR label="가져올 종류">
+        <div style={GS.chips}>
+          <Chip active={type==="uniform"} onClick={()=>setType("uniform")}>👕 유니폼</Chip>
+          <Chip active={type==="equip"}   onClick={()=>setType("equip")}>🏓 용품</Chip>
+        </div>
+      </MFR>
+
+      {/* 중복 경고 */}
+      {dups.length > 0 && (
+        <div style={{background:"rgba(245,158,11,0.1)",border:"1px solid #f59e0b",borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,color:"#fcd34d"}}>
+          ⚠️ 이미 등록된 항목 {dups.length}개: {dups.map(d=>d.name).join(", ")} — 중복 추가됩니다
+        </div>
+      )}
+
+      {/* 미리보기 */}
+      <MFR label={`미리보기 (${preview.length}개)`}>
+        <div style={{maxHeight:260,overflowY:"auto",display:"flex",flexDirection:"column",gap:6}}>
+          {preview.length === 0 && (
+            <div style={{color:"#ef4444",fontSize:12,padding:8}}>⚠️ 파싱된 데이터가 없습니다. 템플릿 형식을 확인해주세요.</div>
+          )}
+          {type === "uniform" && parsedUniforms.map((u,i) => (
+            <div key={i} style={{background:"#1e293b",borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <div style={{fontWeight:600,fontSize:13}}>{u.name}</div>
+                <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{u.year}년도</div>
+              </div>
+              <div style={{display:"flex",flexWrap:"wrap",gap:4,justifyContent:"flex-end",maxWidth:"60%"}}>
+                {Object.entries(u.sizes).map(([sz,v])=>(
+                  <span key={sz} style={{background:"#0b0f1a",border:"1px solid #334155",borderRadius:4,padding:"1px 6px",fontSize:10,color:"#94a3b8"}}>{sz}:{v}</span>
+                ))}
+                {Object.keys(u.sizes).length === 0 && <span style={{fontSize:11,color:"#475569"}}>수량 없음</span>}
+              </div>
+            </div>
+          ))}
+          {type === "equip" && parsedEquips.map((e,i) => (
+            <div key={i} style={{background:"#1e293b",borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <span style={{background:"#374151",color:"#94a3b8",padding:"1px 6px",borderRadius:4,fontSize:10,marginRight:6}}>{e.category}</span>
+                <span style={{fontWeight:600,fontSize:13}}>{e.name}</span>
+                {e.color && <span style={{fontSize:11,color:"#64748b",marginLeft:6}}>{e.color}</span>}
+              </div>
+              <span style={{fontWeight:700,color:e.stock>0?"#10b981":"#ef4444",fontSize:13}}>{e.stock}개</span>
+            </div>
+          ))}
+        </div>
+      </MFR>
+
+      <div style={GS.mBtns}>
+        <SBtn onClick={()=>{ if(type==="uniform") onSaveUniforms(parsedUniforms); else onSaveEquips(parsedEquips); }}
+          color="#3b82f6" full disabled={preview.length===0}>
+          ✅ {preview.length}개 가져오기
+        </SBtn>
+        <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
+      </div>
+    </Modal>
+  );
 }
 
 /* ═══════════════════════════════════════════════════════
