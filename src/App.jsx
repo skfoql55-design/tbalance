@@ -1,11 +1,24 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from "recharts";
+import { db } from "./firebase";
+import { doc, getDoc, setDoc } from "firebase/firestore";
 
 /* ═══════════════════════════════════════════════════════
-   GLOBAL HELPERS
+   GLOBAL HELPERS — Firebase Firestore 기반
 ═══════════════════════════════════════════════════════ */
-const sv = async (k,v) => { try { await window.storage.set(k,JSON.stringify(v)); } catch {} };
-const ld = async (k,d) => { try { const r=await window.storage.get(k); return r?JSON.parse(r.value):d; } catch { return d; } };
+const COLL = "storage";
+const sv = async (k, v) => {
+  try {
+    await setDoc(doc(db, COLL, k.replace(/[:/]/g, "_")), { value: JSON.stringify(v) });
+  } catch(e) { console.error("sv error", e); }
+};
+const ld = async (k, d) => {
+  try {
+    const snap = await getDoc(doc(db, COLL, k.replace(/[:/]/g, "_")));
+    if (snap.exists()) return JSON.parse(snap.data().value);
+    return d;
+  } catch(e) { return d; }
+};
 const gid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,5);
 const td  = () => new Date().toISOString().slice(0,10);
 const fmt = n => Number(n||0).toLocaleString("ko-KR");
