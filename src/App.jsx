@@ -1691,7 +1691,7 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
    MODULE 3 — SALES
 ═══════════════════════════════════════════════════════ */
 function SalesPage({db}){
-  const {uSales,eSales,customers,templates,sus,ses,toast_}=db;
+  const {uSales,eSales,customers,templates,sus,ses,toast_,groupOrders}=db;
   const [tab,setTab]=useState("dashboard");
   const [addMod,setAdd]=useState(null);
   const [editMod,setEdit]=useState(null);
@@ -1729,7 +1729,7 @@ function SalesPage({db}){
           <div key={k} style={{padding:"7px 14px",borderRadius:8,background:tab===k?"#1e293b":"transparent",border:tab===k?"1px solid #f59e0b":"1px solid #334155",color:tab===k?"#f1f5f9":"#64748b",cursor:"pointer",fontSize:12,fontWeight:500}} onClick={()=>setTab(k)}>{l}</div>
         ))}
       </div>
-      {tab==="dashboard"&&<SalesDashboard uSales={uSales} eSales={eSales}/>}
+      {tab==="dashboard"&&<SalesDashboard uSales={uSales} eSales={eSales} groupOrders={groupOrders||[]}/>}
       {tab==="uniform"&&<SalesTable type="uniform" sales={uSales} onEdit={r=>setEdit({type:"uniform",data:r})} onDel={id=>delSale("uniform",id)} onToggle={id=>togPaid("uniform",id)}/>}
       {tab==="equip"&&<SalesTable type="equip" sales={eSales} onEdit={r=>setEdit({type:"equip",data:r})} onDel={id=>delSale("equip",id)} onToggle={id=>togPaid("equip",id)}/>}
       {tab==="unpaid"&&<UnpaidTab uSales={uSales} eSales={eSales} onToggle={togPaid}/>}
@@ -1739,8 +1739,10 @@ function SalesPage({db}){
     </div>
   );
 }
-function SalesDashboard({uSales,eSales}){
+function SalesDashboard({uSales,eSales,groupOrders}){
   const [yr,setYr]=useState(new Date().getFullYear());
+  const [rankTab,setRankTab]=useState("year"); // year | month
+  const [rankMo,setRankMo]=useState(new Date().getMonth()+1);
   const all=[...uSales,...eSales];
   const mData=MONTHS.map((m,i)=>{
     const mo=String(i+1).padStart(2,"0");
@@ -1755,6 +1757,42 @@ function SalesDashboard({uSales,eSales}){
   const totProfit=mData.reduce((a,m)=>a+m.순이익,0);
   const years=[...new Set(all.map(s=>s.date?.slice(0,4)).filter(Boolean))].sort((a,b)=>b-a);
   if(!years.includes(String(yr)))years.unshift(String(yr));
+
+  // ── 인기 유니폼 랭킹 계산 ──
+  // 소스: uSales(매출) + groupOrders(주문수량) 합산
+  const calcRanking = (filterFn) => {
+    const map = {};
+    // 매출 데이터
+    uSales.filter(filterFn).forEach(s => {
+      const name = s.itemName || s.detail || "기타";
+      if(!map[name]) map[name] = { name, salesCnt:0, salesAmt:0, orderQty:0 };
+      map[name].salesCnt += 1;
+      map[name].salesAmt += Number(s.sales||0);
+    });
+    // 단체복 주문 데이터
+    (groupOrders||[]).filter(o=>o.status==="arrived").filter(filterFn2(filterFn)).forEach(o => {
+      const name = o.uniformName || "기타";
+      if(!map[name]) map[name] = { name, salesCnt:0, salesAmt:0, orderQty:0 };
+      map[name].orderQty += Number(o.qty||0);
+    });
+    return Object.values(map).sort((a,b)=>(b.salesAmt+b.orderQty*1000)-(a.salesAmt+a.orderQty*1000));
+  };
+
+  // groupOrders용 필터 변환
+  const filterFn2 = (fn) => (o) => {
+    const d = o.arrivedAt || o.createdAt || "";
+    const fakeS = { date: d };
+    return fn(fakeS);
+  };
+
+  const yearFilter  = s => s.date?.startsWith(String(yr));
+  const monthFilter = s => s.date?.startsWith(`${yr}-${String(rankMo).padStart(2,"0")}`);
+  const ranking = calcRanking(rankTab==="year" ? yearFilter : monthFilter);
+
+  // 메달 색상
+  const medalColors = ["#f59e0b","#94a3b8","#b45309","#3b82f6","#64748b"];
+  const medalEmoji  = ["🥇","🥈","🥉","4위","5위"];
+
   return(
     <div>
       <div style={{display:"flex",gap:8,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
@@ -1764,6 +1802,78 @@ function SalesDashboard({uSales,eSales}){
           <SumPill label="연 순이익" val={won(totProfit)} color="#10b981"/>
         </div>
       </div>
+
+      {/* ── 🏆 인기 유니폼 랭킹 ── */}
+      <div style={{background:"#111827",border:"1px solid #1e293b",borderRadius:12,padding:"16px 18px",marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap",gap:8}}>
+          <div style={{fontSize:13,fontWeight:600,color:"#f1f5f9"}}>🏆 인기 유니폼 랭킹</div>
+          <div style={{display:"flex",gap:6,alignItems:"center",flexWrap:"wrap"}}>
+            <div style={{display:"flex",gap:0,border:"1px solid #334155",borderRadius:8,overflow:"hidden"}}>
+              <div onClick={()=>setRankTab("year")} style={{padding:"5px 14px",fontSize:11,cursor:"pointer",
+                background:rankTab==="year"?"#1e3a5f":"transparent",
+                color:rankTab==="year"?"#93c5fd":"#64748b",fontWeight:rankTab==="year"?600:400}}>연간</div>
+              <div onClick={()=>setRankTab("month")} style={{padding:"5px 14px",fontSize:11,cursor:"pointer",
+                background:rankTab==="month"?"#1e3a5f":"transparent",
+                color:rankTab==="month"?"#93c5fd":"#64748b",fontWeight:rankTab==="month"?600:400}}>월간</div>
+            </div>
+            {rankTab==="month" && (
+              <select value={rankMo} onChange={e=>setRankMo(Number(e.target.value))}
+                style={{...GS.sSel,padding:"4px 8px",fontSize:11}}>
+                {MONTHS.map((m,i)=><option key={i} value={i+1}>{m}</option>)}
+              </select>
+            )}
+          </div>
+        </div>
+
+        {ranking.length === 0
+          ? <div style={{textAlign:"center",padding:"24px 0",color:"#4b5563",fontSize:13}}>
+              📊 {rankTab==="year"?`${yr}년`:`${yr}년 ${rankMo}월`} 매출 데이터가 없습니다
+            </div>
+          : <div style={{display:"flex",flexDirection:"column",gap:8}}>
+              {ranking.slice(0,10).map((item,i)=>{
+                const maxScore = (ranking[0]?.salesAmt||0) + (ranking[0]?.orderQty||0)*1000 || 1;
+                const score    = item.salesAmt + item.orderQty*1000;
+                const pct      = Math.round((score/maxScore)*100);
+                const color    = medalColors[i] || "#334155";
+                return (
+                  <div key={item.name} style={{display:"flex",alignItems:"center",gap:10}}>
+                    {/* 순위 */}
+                    <div style={{width:32,textAlign:"center",fontSize:i<3?18:12,fontWeight:700,
+                      color:medalColors[i]||"#64748b",flexShrink:0}}>
+                      {medalEmoji[i]||`${i+1}위`}
+                    </div>
+                    {/* 이름 + 바 */}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                        <span style={{fontSize:13,fontWeight:600,color:"#f1f5f9",
+                          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"60%"}}>{item.name}</span>
+                        <div style={{display:"flex",gap:8,fontSize:11,color:"#94a3b8",flexShrink:0}}>
+                          {item.salesAmt>0 && <span style={{color:"#f59e0b"}}>{won(item.salesAmt)}</span>}
+                          {item.salesCnt>0 && <span>{item.salesCnt}건</span>}
+                          {item.orderQty>0 && <span style={{color:"#3b82f6"}}>{item.orderQty}벌</span>}
+                        </div>
+                      </div>
+                      <div style={{height:6,background:"#1e293b",borderRadius:3,overflow:"hidden"}}>
+                        <div style={{height:"100%",width:`${pct}%`,background:color,borderRadius:3,
+                          transition:"width 0.5s ease"}}/>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+        }
+
+        {ranking.length > 0 && (
+          <div style={{marginTop:12,paddingTop:10,borderTop:"1px solid #1e293b",
+            fontSize:11,color:"#475569",display:"flex",gap:16,flexWrap:"wrap"}}>
+            <span>📊 매출금액 기준</span>
+            <span>🔵 벌 수 = 단체복 주문 입고 수량</span>
+            <span>총 {ranking.length}종 집계</span>
+          </div>
+        )}
+      </div>
+
       <div style={{background:"#111827",border:"1px solid #1e293b",borderRadius:12,padding:"16px 20px",marginBottom:14}}>
         <div style={{fontSize:12,color:"#64748b",marginBottom:12}}>{yr}년 월별 매출 & 순이익</div>
         <ResponsiveContainer width="100%" height={240}>
