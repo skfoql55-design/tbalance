@@ -1382,30 +1382,7 @@ function InventoryPage({db}){
       </div>
       {tab==="uniform"&&<>
         {lowU.length>0&&<div style={{background:"rgba(245,158,11,0.1)",border:"1px solid #f59e0b",borderRadius:8,padding:"8px 14px",marginBottom:12,color:"#fcd34d",fontSize:12}}>⚠️ 재고 부족: {lowU.map(u=>u.name).join(", ")}</div>}
-        <div style={GS.toolbar}><div style={{fontWeight:600}}>유니폼 목록 <span style={{fontSize:12,color:"#64748b"}}>{uniforms.length}종</span></div><SBtn onClick={()=>setUM("add")} color="#3b82f6" style={{marginLeft:"auto"}}>+ 유니폼 등록</SBtn></div>
-        {uniforms.length===0?<EmptyState icon="👕" msg="등록된 유니폼 없음"/>:
-          <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(200px,1fr))",gap:12}}>
-            {uniforms.map(u=>{ const tot=Object.values(u.sizes||{}).reduce((a,v)=>a+Number(v||0),0); const low=Object.values(u.sizes||{}).some(v=>Number(v||0)>0&&Number(v||0)<=3);
-              return <div key={u.id} style={{background:"#111827",border:`1px solid ${tot===0?"#ef4444":low?"#f59e0b":"#1e293b"}`,borderRadius:10,overflow:"hidden"}}>
-                <div style={{height:130,background:"#0b0f1a",display:"flex",alignItems:"center",justifyContent:"center"}}>{u.imgSrc?<img src={u.imgSrc} style={{height:"100%",width:"100%",objectFit:"cover"}} alt=""/>:<span style={{fontSize:40,color:"#1e293b"}}>👕</span>}</div>
-                <div style={{padding:"10px 12px"}}>
-                  <div style={{fontWeight:600,fontSize:13,marginBottom:2}}>{u.name}</div>
-                  <div style={{fontSize:11,color:"#64748b",marginBottom:6}}>{u.year}년도</div>
-                  <div style={{display:"flex",justifyContent:"space-between",background:"#0b0f1a",borderRadius:5,padding:"5px 8px",marginBottom:8}}>
-                    <span style={{fontSize:11,color:"#64748b"}}>총 재고</span>
-                    <span style={{fontWeight:700,color:tot===0?"#ef4444":low?"#f59e0b":"#10b981"}}>{tot}벌</span>
-                  </div>
-                  <div style={{display:"flex",gap:4}}>
-                    <SBtn onClick={()=>setUM({mode:"edit",data:u})} color="#374151">✏️ 수정</SBtn>
-                    <SBtn onClick={()=>setIO({type:"uniform",item:u,mode:"in"})} color="#1d4ed8">입고</SBtn>
-                    <SBtn onClick={()=>setIO({type:"uniform",item:u,mode:"out"})} color="#374151">출고</SBtn>
-                    <SBtn onClick={()=>delU(u.id)} color="#7f1d1d">🗑</SBtn>
-                  </div>
-                </div>
-              </div>;
-            })}
-          </div>
-        }
+        <UniformListView uniforms={uniforms} onEdit={u=>setUM({mode:"edit",data:u})} onDel={delU} onIO={setIO} onAdd={()=>setUM("add")}/>
       </>}
       {tab==="equip"&&<>
         {zeroE.length>0&&<div style={{background:"rgba(239,68,68,0.1)",border:"1px solid #ef4444",borderRadius:8,padding:"8px 14px",marginBottom:12,color:"#fca5a5",fontSize:12}}>🚫 품절: {zeroE.map(e=>e.name).join(", ")}</div>}
@@ -1482,7 +1459,199 @@ function InventoryPage({db}){
     </div>
   );
 }
-function UniformModal({onClose,onSave,initial}){
+function UniformListView({ uniforms, onEdit, onDel, onIO, onAdd }) {
+  const years = useMemo(() => {
+    const ys = [...new Set(uniforms.map(u => u.year).filter(Boolean))].sort((a,b) => b-a);
+    return ["전체", ...ys];
+  }, [uniforms]);
+
+  const [selYear, setSelYear] = useState("전체");
+  const [sortMode, setSortMode] = useState("default"); // default | nostock | lowstock
+  const [search, setSearch] = useState("");
+
+  const filtered = useMemo(() => {
+    let list = uniforms.filter(u => {
+      const yearOk = selYear === "전체" || String(u.year) === String(selYear);
+      const searchOk = !search || u.name.includes(search);
+      return yearOk && searchOk;
+    });
+    if (sortMode === "nostock") {
+      list = [...list].sort((a, b) => {
+        const totA = Object.values(a.sizes||{}).reduce((s,v)=>s+Number(v||0),0);
+        const totB = Object.values(b.sizes||{}).reduce((s,v)=>s+Number(v||0),0);
+        return totA - totB;
+      });
+    } else if (sortMode === "lowstock") {
+      list = [...list].sort((a, b) => {
+        const zeroA = Object.values(a.sizes||{}).filter(v=>Number(v||0)===0).length;
+        const zeroB = Object.values(b.sizes||{}).filter(v=>Number(v||0)===0).length;
+        return zeroB - zeroA;
+      });
+    }
+    return list;
+  }, [uniforms, selYear, sortMode, search]);
+
+  const isBarMode = sortMode === "nostock" || sortMode === "lowstock";
+
+  return (
+    <div>
+      {/* 툴바 */}
+      <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
+        <input style={{...GS.sInp,flex:1,minWidth:120,maxWidth:200}} placeholder="유니폼 검색..." value={search} onChange={e=>setSearch(e.target.value)}/>
+        <SBtn onClick={onAdd} color="#3b82f6" style={{marginLeft:"auto"}}>+ 유니폼 등록</SBtn>
+      </div>
+
+      {/* 년도 필터 */}
+      <div style={{display:"flex",gap:5,marginBottom:10,flexWrap:"wrap",alignItems:"center"}}>
+        <span style={{fontSize:11,color:"#64748b",marginRight:2}}>년도</span>
+        {years.map(y => (
+          <div key={y} onClick={()=>setSelYear(y)} style={{
+            padding:"4px 12px", borderRadius:20, cursor:"pointer", fontSize:11, fontWeight:500,
+            background: selYear===y ? "#78350f" : "#1e293b",
+            border: selYear===y ? "1px solid #f59e0b" : "1px solid #334155",
+            color: selYear===y ? "#fcd34d" : "#94a3b8",
+          }}>{y}{y!=="전체"?"년":""}</div>
+        ))}
+      </div>
+
+      {/* 정렬 방식 */}
+      <div style={{display:"flex",gap:5,marginBottom:14,flexWrap:"wrap",alignItems:"center"}}>
+        <span style={{fontSize:11,color:"#64748b",marginRight:2}}>정렬</span>
+        {[
+          ["default","기본순"],
+          ["nostock","재고 없는 순 📊"],
+          ["lowstock","품절 사이즈 많은 순"],
+        ].map(([k,l]) => (
+          <div key={k} onClick={()=>setSortMode(k)} style={{
+            padding:"4px 12px", borderRadius:20, cursor:"pointer", fontSize:11, fontWeight:500,
+            background: sortMode===k ? "#1e3a5f" : "#1e293b",
+            border: sortMode===k ? "1px solid #3b82f6" : "1px solid #334155",
+            color: sortMode===k ? "#93c5fd" : "#94a3b8",
+          }}>{l}</div>
+        ))}
+      </div>
+
+      <div style={{fontSize:12,color:"#64748b",marginBottom:10}}>
+        {filtered.length}종 {isBarMode && <span style={{color:"#f59e0b"}}>· 🔴 품절 사이즈</span>}
+      </div>
+
+      {filtered.length === 0 ? <EmptyState icon="👕" msg="해당 조건의 유니폼 없음"/> :
+
+        /* ── 바 뷰 (재고 없는 순) ── */
+        isBarMode ? (
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {filtered.map(u => {
+              const sizes = u.sizes || {};
+              const sizeEntries = Object.entries(sizes);
+              const tot = sizeEntries.reduce((a,[,v])=>a+Number(v||0),0);
+              const maxQty = Math.max(...sizeEntries.map(([,v])=>Number(v||0)), 1);
+              const zeroCnt = sizeEntries.filter(([,v])=>Number(v||0)===0).length;
+              const low = tot > 0 && tot <= 5;
+              return (
+                <div key={u.id} style={{
+                  background:"#111827", borderRadius:12,
+                  border:`1px solid ${tot===0?"#ef4444":zeroCnt>0?"#f59e0b":"#1e293b"}`,
+                  padding:"12px 14px"
+                }}>
+                  {/* 헤더 */}
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+                    <div>
+                      <span style={{fontWeight:700,fontSize:14}}>{u.name}</span>
+                      <span style={{fontSize:11,color:"#64748b",marginLeft:8}}>{u.year}년도</span>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={{
+                        fontWeight:800, fontSize:16,
+                        color: tot===0?"#ef4444":low?"#f59e0b":"#10b981"
+                      }}>총 {tot}벌</span>
+                      {zeroCnt>0 && <span style={{background:"rgba(239,68,68,0.15)",border:"1px solid #ef4444",color:"#fca5a5",borderRadius:5,padding:"1px 7px",fontSize:10}}>품절 {zeroCnt}사이즈</span>}
+                    </div>
+                  </div>
+
+                  {/* 사이즈별 재고 바 */}
+                  {sizeEntries.length > 0 ? (
+                    <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                      {sizeEntries.map(([sz, qty]) => {
+                        const q = Number(qty||0);
+                        const pct = Math.round((q/maxQty)*100);
+                        const isEmpty = q === 0;
+                        const isLow = q > 0 && q <= 3;
+                        const barColor = isEmpty ? "#ef4444" : isLow ? "#f59e0b" : "#3b82f6";
+                        return (
+                          <div key={sz} style={{display:"flex",alignItems:"center",gap:8}}>
+                            <div style={{
+                              width:36, textAlign:"right", fontSize:11, fontWeight:600,
+                              color: isEmpty ? "#ef4444" : isLow ? "#f59e0b" : "#94a3b8",
+                              flexShrink:0
+                            }}>{sz}</div>
+                            <div style={{flex:1,height:18,background:"#1e293b",borderRadius:4,overflow:"hidden",position:"relative"}}>
+                              {isEmpty
+                                ? <div style={{height:"100%",width:"100%",background:"rgba(239,68,68,0.2)",
+                                    display:"flex",alignItems:"center",justifyContent:"center"}}>
+                                    <span style={{fontSize:9,color:"#ef4444",fontWeight:700,letterSpacing:1}}>품절</span>
+                                  </div>
+                                : <div style={{height:"100%",width:`${pct}%`,background:barColor,borderRadius:4,
+                                    minWidth:4,transition:"width 0.3s ease"}}/>
+                              }
+                            </div>
+                            <div style={{
+                              width:28, textAlign:"right", fontSize:12, fontWeight:700,
+                              color: isEmpty ? "#ef4444" : isLow ? "#f59e0b" : "#f1f5f9",
+                              flexShrink:0
+                            }}>{isEmpty ? "0" : q}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div style={{fontSize:12,color:"#475569",textAlign:"center",padding:"8px 0"}}>사이즈 정보 없음</div>
+                  )}
+
+                  {/* 액션 버튼 */}
+                  <div style={{display:"flex",gap:5,marginTop:12,flexWrap:"wrap"}}>
+                    <SBtn onClick={()=>onEdit(u)} color="#374151">✏️ 수정</SBtn>
+                    <SBtn onClick={()=>onIO({type:"uniform",item:u,mode:"in"})} color="#1d4ed8">입고</SBtn>
+                    <SBtn onClick={()=>onIO({type:"uniform",item:u,mode:"out"})} color="#374151">출고</SBtn>
+                    <SBtn onClick={()=>onDel(u.id)} color="#7f1d1d">🗑</SBtn>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+
+        /* ── 카드 뷰 (기본) ── */
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:12}}>
+          {filtered.map(u => {
+            const tot = Object.values(u.sizes||{}).reduce((a,v)=>a+Number(v||0),0);
+            const low = Object.values(u.sizes||{}).some(v=>Number(v||0)>0&&Number(v||0)<=3);
+            return (
+              <div key={u.id} style={{background:"#111827",border:`1px solid ${tot===0?"#ef4444":low?"#f59e0b":"#1e293b"}`,borderRadius:10,overflow:"hidden"}}>
+                <div style={{height:110,background:"#0b0f1a",display:"flex",alignItems:"center",justifyContent:"center"}}>
+                  {u.imgSrc ? <img src={u.imgSrc} style={{height:"100%",width:"100%",objectFit:"cover"}} alt=""/> : <span style={{fontSize:36,color:"#1e293b"}}>👕</span>}
+                </div>
+                <div style={{padding:"10px 12px"}}>
+                  <div style={{fontWeight:600,fontSize:13,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.name}</div>
+                  <div style={{fontSize:11,color:"#64748b",marginBottom:6}}>{u.year}년도</div>
+                  <div style={{display:"flex",justifyContent:"space-between",background:"#0b0f1a",borderRadius:5,padding:"5px 8px",marginBottom:8}}>
+                    <span style={{fontSize:11,color:"#64748b"}}>총 재고</span>
+                    <span style={{fontWeight:700,color:tot===0?"#ef4444":low?"#f59e0b":"#10b981"}}>{tot}벌</span>
+                  </div>
+                  <div style={{display:"flex",gap:4,flexWrap:"wrap"}}>
+                    <SBtn onClick={()=>onEdit(u)} color="#374151">✏️ 수정</SBtn>
+                    <SBtn onClick={()=>onIO({type:"uniform",item:u,mode:"in"})} color="#1d4ed8">입고</SBtn>
+                    <SBtn onClick={()=>onIO({type:"uniform",item:u,mode:"out"})} color="#374151">출고</SBtn>
+                    <SBtn onClick={()=>onDel(u.id)} color="#7f1d1d">🗑</SBtn>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
   const isEdit = !!initial;
   const [name,setName]=useState(initial?.name||"");
   const [year,setYear]=useState(initial?.year||String(new Date().getFullYear()));
