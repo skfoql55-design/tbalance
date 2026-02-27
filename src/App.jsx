@@ -338,11 +338,17 @@ const LS = {
    MAIN APP — SHELL (모바일 대응)
 ═══════════════════════════════════════════════════════ */
 function MainApp({ user, onLogout }) {
-  const [page, setPage]       = useState("grouporders");
+  const [page, setPage]       = useState(() => {
+    const hash = window.location.hash.replace("#","");
+    return NAV_ITEMS.find(n=>n.id===hash) ? hash : "grouporders";
+  });
   const [sideOpen, setSide]   = useState(true);
-  const [drawerOpen, setDrw]  = useState(false); // mobile drawer
+  const [drawerOpen, setDrw]  = useState(false);
   const [toast, setToast]     = useState(null);
   const isMobile              = useIsMobile();
+
+  // 페이지 변경 시 URL 해시 업데이트
+  useEffect(() => { window.location.hash = page; }, [page]);
 
   // ── GLOBAL DATA STATE ──
   const [uniforms,  setU]  = useState([]);
