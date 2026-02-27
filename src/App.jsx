@@ -1304,7 +1304,8 @@ function InventoryPage({db}){
   // ── CSV 임포트 처리 ──
   const [importMod, setImportMod] = useState(null); // {rows, type}
   const [dragOver, setDragOver] = useState(false);
-  const [imgConfirm, setImgConfirm] = useState(null); // {uniform, file, url}
+  const [imgConfirm, setImgConfirm] = useState(null); // {uniform, file, queue}
+  const [imgProgress, setImgProgress] = useState(null); // {done, total, current}
 
   const handleCSVFile = (file) => {
     if(!file) return;
@@ -1313,7 +1314,6 @@ function InventoryPage({db}){
       try {
         const rows = parseCSV(e.target.result);
         if(!rows.length){ toast_("데이터가 없습니다", false); return; }
-        // 유니폼 시트인지 용품 시트인지 판별
         const keys = Object.keys(rows[0]);
         const isUniform = keys.includes("유니폼명") || keys.includes("이름");
         const isEquip   = keys.includes("카테고리") || keys.includes("제품명");
@@ -1324,45 +1324,72 @@ function InventoryPage({db}){
     reader.readAsText(file, "UTF-8");
   };
 
-  // ── 이미지 파일 → 유니폼 자동 매칭 ──
+  // ── 이미지 파일 → 유니폼 자동 매칭 (다중 지원) ──
   const handleImageFiles = async (files) => {
     const imgFiles = Array.from(files).filter(f => f.type.startsWith("image/"));
     if(imgFiles.length === 0){ toast_("이미지 파일이 아닙니다", false); return; }
 
-    for(const file of imgFiles){
-      // 파일명에서 확장자 제거
-      const rawName = file.name.replace(/\.[^.]+$/, "").trim();
+    const notFound = [];
+    const duplicates = []; // 이미 이미지 있는 것들
+    const readyToUpload = []; // 바로 업로드할 것들
 
-      // 유니폼 이름 매칭 (정확 일치 → 포함 일치)
+    for(const file of imgFiles){
+      const rawName = file.name.replace(/\.[^.]+$/, "").trim();
       let matched = uniforms.find(u => u.name === rawName);
       if(!matched) matched = uniforms.find(u => rawName.includes(u.name) || u.name.includes(rawName));
 
       if(!matched){
-        toast_(`❌ "${rawName}" 와 일치하는 유니폼을 찾을 수 없습니다.\n파일명을 유니폼명과 동일하게 맞춰주세요.`, false);
+        notFound.push(rawName);
         continue;
       }
-
-      // 이미 이미지가 있으면 확인 팝업
       if(matched.imgSrc){
-        setImgConfirm({ uniform: matched, file });
-        return; // 한 번에 하나씩 처리
+        duplicates.push({ uniform: matched, file });
+      } else {
+        readyToUpload.push({ uniform: matched, file });
       }
+    }
 
-      // 이미지 업로드 & 저장
-      await applyImageToUniform(matched, file);
+    // 매칭 실패 알림
+    if(notFound.length > 0){
+      toast_(`❌ 매칭 실패 ${notFound.length}건: ${notFound.slice(0,3).join(", ")}${notFound.length>3?" ...":""}`, false);
+    }
+
+    // 바로 업로드 가능한 것들 처리
+    if(readyToUpload.length > 0){
+      const total = readyToUpload.length;
+      setImgProgress({ done:0, total, current:"" });
+      for(let i=0; i<readyToUpload.length; i++){
+        const {uniform, file} = readyToUpload[i];
+        setImgProgress({ done:i, total, current:uniform.name });
+        await applyImageToUniform(uniform, file);
+      }
+      setImgProgress(null);
+      toast_(`✅ ${total}건 이미지 등록 완료!`);
+    }
+
+    // 중복 있는 것들은 하나씩 확인
+    if(duplicates.length > 0){
+      setImgConfirm({ ...duplicates[0], queue: duplicates.slice(1) });
     }
   };
 
   const applyImageToUniform = async (uniform, file) => {
-    toast_("⏳ 이미지 업로드 중...");
     try {
       const url = await uploadImage(file, `uniforms/${gid()}_${file.name}`);
       const updated = uniforms.map(u => u.id === uniform.id ? {...u, imgSrc: url} : u);
       await su(updated);
-      toast_(`✅ "${uniform.name}" 이미지 등록 완료!`);
     } catch(e) {
       console.error(e);
-      toast_("이미지 업로드 실패", false);
+      toast_(`"${uniform.name}" 업로드 실패`, false);
+    }
+  };
+
+  // 중복 확인 후 다음 항목 처리
+  const handleConfirmNext = (queue) => {
+    if(queue && queue.length > 0){
+      setImgConfirm({ ...queue[0], queue: queue.slice(1) });
+    } else {
+      setImgConfirm(null);
     }
   };
 
@@ -1372,12 +1399,10 @@ function InventoryPage({db}){
     if(!files.length) return;
 
     const first = files[0];
-    // CSV 파일인 경우
     if(first.name.endsWith(".csv") || first.name.endsWith(".xlsx")){
       handleCSVFile(first);
       return;
     }
-    // 이미지 파일인 경우
     if(first.type.startsWith("image/")){
       handleImageFiles(files);
       return;
@@ -1550,6 +1575,7 @@ function InventoryPage({db}){
       />}
       {imgConfirm&&<Modal title="🖼 이미지 교체 확인" onClose={()=>setImgConfirm(null)}>
         <div style={{textAlign:"center",marginBottom:16}}>
+          {imgConfirm.queue&&imgConfirm.queue.length>0&&<div style={{fontSize:10,color:"#64748b",marginBottom:8,background:"#1e293b",padding:"4px 10px",borderRadius:6,display:"inline-block"}}>남은 확인: {imgConfirm.queue.length+1}건</div>}
           <div style={{fontSize:13,color:"#f1f5f9",marginBottom:12}}>
             <b style={{color:"#f59e0b"}}>{imgConfirm.uniform.name}</b> 에 이미 등록된 이미지가 있습니다.
           </div>
@@ -1558,13 +1584,25 @@ function InventoryPage({db}){
         </div>
         <div style={GS.mBtns}>
           <SBtn onClick={async()=>{
-            const {uniform,file}=imgConfirm;
+            const {uniform,file,queue}=imgConfirm;
             setImgConfirm(null);
             await applyImageToUniform(uniform,file);
+            toast_(`✅ "${uniform.name}" 이미지 교체 완료!`);
+            handleConfirmNext(queue);
           }} color="#f59e0b" full>✅ 교체하기</SBtn>
-          <SBtn onClick={()=>setImgConfirm(null)} color="#374151" full>취소</SBtn>
+          <SBtn onClick={()=>{
+            const {queue}=imgConfirm;
+            handleConfirmNext(queue);
+          }} color="#374151" full>건너뛰기</SBtn>
         </div>
       </Modal>}
+      {imgProgress&&<div style={{position:"fixed",bottom:80,left:"50%",transform:"translateX(-50%)",background:"#1e293b",border:"1px solid #3b82f6",borderRadius:10,padding:"10px 20px",zIndex:9999,textAlign:"center",minWidth:250}}>
+        <div style={{fontSize:12,color:"#93c5fd",marginBottom:6}}>🖼 이미지 업로드 중... ({imgProgress.done}/{imgProgress.total})</div>
+        <div style={{height:6,background:"#0b0f1a",borderRadius:3,overflow:"hidden"}}>
+          <div style={{height:"100%",width:`${Math.round((imgProgress.done/imgProgress.total)*100)}%`,background:"#3b82f6",borderRadius:3,transition:"width 0.3s"}}/>
+        </div>
+        {imgProgress.current&&<div style={{fontSize:11,color:"#64748b",marginTop:4}}>{imgProgress.current}</div>}
+      </div>}
     </div>
   );
 }
