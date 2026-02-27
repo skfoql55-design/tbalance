@@ -2,6 +2,10 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ComposedChart } from "recharts";
 import { db } from "./firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
+import { storage } from "./firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { storage } from "./firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 /* ═══════════════════════════════════════════════════════
    GLOBAL HELPERS — Firebase Firestore 기반
@@ -19,13 +23,35 @@ const ld = async (k, d) => {
     return d;
   } catch(e) { return d; }
 };
+
+// Firebase Storage 이미지 업로드
+const uploadImage = async (file, path) => {
+  try {
+    const storageRef = ref(storage, path);
+    await uploadBytes(storageRef, file);
+    return await getDownloadURL(storageRef);
+  } catch(e) {
+    console.error("uploadImage error", e);
+    // Storage 실패 시 base64 fallback
+    return new Promise((res) => {
+      const r = new FileReader();
+      r.onload = ev => res(ev.target.result);
+      r.readAsDataURL(file);
+    });
+  }
+};
 const gid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,5);
 const td  = () => new Date().toISOString().slice(0,10);
 const fmt = n => Number(n||0).toLocaleString("ko-KR");
 const won = n => fmt(n)+"원";
 
-// CSV 내보내기
-const exportCSV = (filename, headers, rows) => {
+// Firebase Storage 이미지 업로드
+const uploadImage = async (file, path) => {
+  if(file.size > 5 * 1024 * 1024) throw new Error("5MB 초과");
+  const storageRef = ref(storage, path);
+  await uploadBytes(storageRef, file);
+  return await getDownloadURL(storageRef);
+};
   const BOM = "\uFEFF";
   const lines = [headers.join(","), ...rows.map(r => r.map(c => `"${String(c??"-").replace(/"/g,'""')}"`).join(","))];
   const blob = new Blob([BOM + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
@@ -1652,28 +1678,44 @@ function UniformListView({ uniforms, onEdit, onDel, onIO, onAdd }) {
     </div>
   );
 }
+function UniformModal({onClose,onSave,initial}){
   const isEdit = !!initial;
   const [name,setName]=useState(initial?.name||"");
   const [year,setYear]=useState(initial?.year||String(new Date().getFullYear()));
   const [imgSrc,setImg]=useState(initial?.imgSrc||null);
   const [sizes,setSizes]=useState(initial?.sizes||{});
   const [cs,setCS]=useState("");
+  const [uploading,setUploading]=useState(false);
   const imgRef=useRef();
   const toggleSz=sz=>setSizes(p=>p[sz]!==undefined?(()=>{const n={...p};delete n[sz];return n;})():{...p,[sz]:0});
   const addCustom=()=>{if(cs.trim()&&sizes[cs.trim()]===undefined){setSizes(p=>({...p,[cs.trim()]:0}));setCS("");}};
+
+  const handleImageFile = async (file) => {
+    if(!file) return;
+    setUploading(true);
+    try {
+      const url = await uploadImage(file, `uniforms/${gid()}_${file.name}`);
+      setImg(url);
+    } catch(e) { console.error(e); }
+    setUploading(false);
+  };
+
   return <Modal title={isEdit?"✏️ 유니폼 수정":"유니폼 등록"} onClose={onClose}>
-    <input type="file" accept="image/*" ref={imgRef} style={{display:"none"}} onChange={e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>setImg(ev.target.result);r.readAsDataURL(f);}} />
+    <input type="file" accept="image/*" ref={imgRef} style={{display:"none"}} onChange={e=>handleImageFile(e.target.files[0])} />
     <MFR label="유니폼명 *"><input style={GS.inp} value={name} onChange={e=>setName(e.target.value)} placeholder="예) y25-01 스카이웨이브 블루"/></MFR>
     <div style={GS.fGrid}>
       <MFR label="연도"><input style={GS.inp} value={year} onChange={e=>setYear(e.target.value)}/></MFR>
       <MFR label="이미지">
         <div style={{display:"flex",alignItems:"center",gap:8}}>
-          <SBtn onClick={()=>imgRef.current.click()} color="#374151">📂 선택</SBtn>
+          <SBtn onClick={()=>imgRef.current.click()} color="#374151" disabled={uploading}>
+            {uploading?"⏳ 업로드 중...":"📂 선택"}
+          </SBtn>
           {imgSrc&&<>
             <img src={imgSrc} style={{height:36,borderRadius:4}} alt=""/>
             <SBtn onClick={()=>setImg(null)} color="#7f1d1d">✕</SBtn>
           </>}
         </div>
+        {uploading&&<div style={{fontSize:11,color:"#f59e0b",marginTop:4}}>☁️ Firebase Storage에 업로드 중...</div>}
       </MFR>
     </div>
     <MFR label="사이즈 선택">
@@ -1699,7 +1741,9 @@ function UniformListView({ uniforms, onEdit, onDel, onIO, onAdd }) {
       </MFR>
     )}
     <div style={GS.mBtns}>
-      <SBtn onClick={()=>{if(!name.trim())return;onSave({name,year,imgSrc,sizes});}} color={isEdit?"#10b981":"#3b82f6"} full>{isEdit?"✅ 수정 완료":"등록"}</SBtn>
+      <SBtn onClick={()=>{if(!name.trim()||uploading)return;onSave({name,year,imgSrc,sizes});}} color={isEdit?"#10b981":"#3b82f6"} full disabled={uploading}>
+        {uploading?"⏳ 이미지 업로드 중...":(isEdit?"✅ 수정 완료":"등록")}
+      </SBtn>
       <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
     </div>
   </Modal>;
@@ -2983,12 +3027,13 @@ const diffDays = (dateStr) => {
 };
 
 function GroupOrdersPage({ db }) {
-  const { groupOrders, customers, sgo, toast_ } = db;
-  const [viewTab, setViewTab]   = useState("pending");  // pending | arrived
+  const { groupOrders, customers, sgo, sus, uSales, toast_ } = db;
+  const [viewTab, setViewTab]   = useState("pending");
   const [addMod, setAdd]        = useState(false);
   const [editId, setEditId]     = useState(null);
   const [search, setSearch]     = useState("");
   const [stepFilter, setSF]     = useState("all");
+  const [autoSaleMod, setAutoSale] = useState(null); // 입고 완료 시 자동 매출 팝업
 
   const saveGO = async (next) => { await sgo(next); };
 
@@ -3006,7 +3051,10 @@ function GroupOrdersPage({ db }) {
   };
   const markArrived = async (id) => {
     await updGO(id, { status: "arrived", arrivedAt: td() });
-    toast_("입고 완료 처리!");
+    toast_("✅ 입고 완료!");
+    // 자동 매출 등록 팝업 띄우기
+    const order = groupOrders.find(o => o.id === id);
+    if (order) setAutoSale(order);
   };
   const exportOrders = () => {
     exportCSV(`단체복주문_${td()}.csv`,
@@ -3022,12 +3070,20 @@ function GroupOrdersPage({ db }) {
   };
   const markStep = async (id, key) => {
     const patch = { status: key };
-    if (key === "ordered" ) {
+    if (key === "ordered") {
       const cur = groupOrders.find(o=>o.id===id);
       if (!cur?.orderedAt) patch.orderedAt = td();
       if (!cur?.expectedAt) patch.expectedAt = addDaysStr(td(), 14);
     }
-    if (key === "arrived") { patch.arrivedAt = td(); }
+    if (key === "arrived") {
+      patch.arrivedAt = td();
+      await updGO(id, patch);
+      toast_("✅ 입고 완료!");
+      // 자동 매출 팝업
+      const order = groupOrders.find(o => o.id === id);
+      if (order) setAutoSale({ ...order, ...patch });
+      return;
+    }
     await updGO(id, patch);
     toast_(`${GO_STEPS.find(s=>s.key===key)?.label} 처리`);
   };
@@ -3276,6 +3332,18 @@ function GroupOrdersPage({ db }) {
       {addMod && <GOModal customers={customers} onClose={()=>setAdd(false)} onSave={d=>{addGO(d);setAdd(false);}}/>}
       {editOrder && <GOModal initial={editOrder} customers={customers} onClose={()=>setEditId(null)}
         onSave={d=>{ updGO(editId,d); setEditId(null); toast_("수정 완료!"); }}/>}
+      {autoSaleMod && (
+        <AutoSaleModal
+          order={autoSaleMod}
+          onClose={()=>setAutoSale(null)}
+          onSave={async(d)=>{
+            await sus([{...d, id:gid()},...(uSales||[])]);
+            toast_("🎉 매출 자동 등록 완료!");
+            setAutoSale(null);
+          }}
+          onSkip={()=>setAutoSale(null)}
+        />
+      )}
     </div>
   );
 }
@@ -3344,6 +3412,90 @@ function GOModal({ initial, customers, onClose, onSave }) {
       <div style={GS.mBtns}>
         <SBtn onClick={()=>{ if(!f.customer.trim()) return; onSave(f); }} color="#f59e0b" full>{initial?"수정 저장":"등록"}</SBtn>
         <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
+      </div>
+    </Modal>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   자동 매출 등록 팝업
+═══════════════════════════════════════════════════════ */
+function AutoSaleModal({ order, onClose, onSave, onSkip }) {
+  const [f, setF] = useState({
+    date:    td(),
+    customer: order.customer || "",
+    itemName: order.uniformName || "",
+    orderType: "단체복 등판 제작",
+    detail:  `${order.uniformName||""} ${order.qty||""}벌 입고완료`,
+    sales:   order.amount ? String(order.amount) : "",
+    cost:    "",
+    payMethod: "계좌이체",
+    paid:    false,
+    memo:    order.memo || "",
+    type:    "uniform",
+  });
+  const s = (k,v) => setF(p=>({...p,[k]:v}));
+  const profit = Number(f.sales||0) - Number(f.cost||0);
+
+  return (
+    <Modal title="🎉 입고 완료 — 매출 자동 등록" onClose={onSkip} wide>
+      {/* 주문 요약 */}
+      <div style={{background:"rgba(16,185,129,0.08)",border:"1px solid #10b981",borderRadius:10,padding:"12px 14px",marginBottom:16}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <span style={{fontSize:20}}>✅</span>
+          <span style={{fontWeight:700,fontSize:14,color:"#6ee7b7"}}>입고 완료!</span>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:4,fontSize:12,color:"#94a3b8"}}>
+          <span>거래처: <b style={{color:"#f1f5f9"}}>{order.customer}</b></span>
+          <span>유니폼: <b style={{color:"#f1f5f9"}}>{order.uniformName||"-"}</b></span>
+          <span>수량: <b style={{color:"#f1f5f9"}}>{order.qty||"-"}벌</b></span>
+          <span>입고일: <b style={{color:"#f1f5f9"}}>{td()}</b></span>
+        </div>
+      </div>
+
+      <div style={{fontSize:12,color:"#94a3b8",marginBottom:12,display:"flex",alignItems:"center",gap:6}}>
+        <span style={{fontSize:16}}>💡</span>
+        매출 정보를 입력하고 <b style={{color:"#f1f5f9"}}>매출 등록</b>을 누르면 매출 관리에 자동 반영됩니다.
+      </div>
+
+      <div style={GS.fGrid}>
+        <MFR label="날짜"><input type="date" style={GS.inp} value={f.date} onChange={e=>s("date",e.target.value)}/></MFR>
+        <MFR label="거래처명"><input style={GS.inp} value={f.customer} onChange={e=>s("customer",e.target.value)}/></MFR>
+      </div>
+      <MFR label="거래내역">
+        <input style={GS.inp} value={f.detail} onChange={e=>s("detail",e.target.value)}/>
+      </MFR>
+      <div style={GS.fGrid}>
+        <MFR label="매출액 (원)">
+          <input type="number" style={GS.inp} value={f.sales} onChange={e=>s("sales",e.target.value)} placeholder="0"/>
+        </MFR>
+        <MFR label="원가 (원)">
+          <input type="number" style={GS.inp} value={f.cost} onChange={e=>s("cost",e.target.value)} placeholder="0"/>
+        </MFR>
+      </div>
+      {(f.sales||f.cost) && (
+        <div style={{display:"flex",justifyContent:"space-between",background:"#0b0f1a",borderRadius:8,padding:"8px 14px",marginBottom:10}}>
+          <span style={{fontSize:12,color:"#64748b"}}>순이익</span>
+          <span style={{fontWeight:700,fontSize:14,color:profit>=0?"#10b981":"#ef4444"}}>{won(profit)}</span>
+        </div>
+      )}
+      <div style={GS.fGrid}>
+        <MFR label="결제수단">
+          <select style={GS.inp} value={f.payMethod} onChange={e=>s("payMethod",e.target.value)}>
+            {PAY_METHODS.map(m=><option key={m}>{m}</option>)}
+          </select>
+        </MFR>
+        <MFR label="입금여부">
+          <div style={GS.chips}>
+            <Chip active={f.paid} onClick={()=>s("paid",true)} green>✓ 입금완료</Chip>
+            <Chip active={!f.paid} onClick={()=>s("paid",false)} red>미수금</Chip>
+          </div>
+        </MFR>
+      </div>
+
+      <div style={GS.mBtns}>
+        <SBtn onClick={()=>onSave(f)} color="#10b981" full>✅ 매출 등록</SBtn>
+        <SBtn onClick={onSkip} color="#374151" full>나중에 등록</SBtn>
       </div>
     </Modal>
   );
