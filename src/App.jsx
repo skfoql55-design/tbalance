@@ -99,6 +99,15 @@ const BUILTIN_FONTS = [
   { name:"Georgia",        value:"Georgia,serif",             weight:"400" },
 ];
 
+const COMPANY_INFO = {
+  name: "티밸런스",
+  owner: "윤홍균",
+  bizNum: "420-35-00638",
+  address: "경기도 화성시 동탄1길로 570-6, 골든아이타워 409호",
+  bizType: "도소매업",
+  bizCategory: "전자상거래업(스포츠용품)",
+};
+
 /* ═══════════════════════════════════════════════════════
    MOBILE HELPERS
 ═══════════════════════════════════════════════════════ */
@@ -384,18 +393,20 @@ function MainApp({ user, onLogout }) {
   const [invoices,  setIn] = useState([]);
   const [templates, setT]  = useState(DEFAULT_TPLS);
   const [groupOrders, setGO] = useState([]);
+  const [transStmts, setTS] = useState([]);
   const [dbReady,   setDbR]= useState(false);
 
   useEffect(() => {
     (async () => {
-      const [u,e,ih,ag,us,es,or,c,p,inv,t,go] = await Promise.all([
+      const [u,e,ih,ag,us,es,or,c,p,inv,t,go,ts] = await Promise.all([
         ld("inv:uniforms",[]), ld("inv:equips",[]), ld("inv:history",[]), ld("inv:agencies",[]),
         ld("sales:uniform",[]), ld("sales:equip",[]),
         ld("orders:list",[]),
         ld("crm:customers",[]), ld("crm:payments",[]), ld("crm:invoices",[]), ld("crm:templates",DEFAULT_TPLS),
         ld("go:list",[]),
+        ld("crm:transStmts",[]),
       ]);
-      setU(u);setE(e);setIH(ih);setAg(ag);setUS(us);setES(es);setOr(or);setC(c);setP(p);setIn(inv);setT(t);setGO(go);
+      setU(u);setE(e);setIH(ih);setAg(ag);setUS(us);setES(es);setOr(or);setC(c);setP(p);setIn(inv);setT(t);setGO(go);setTS(ts);
       setDbR(true);
     })();
   }, []);
@@ -414,10 +425,11 @@ function MainApp({ user, onLogout }) {
   const si  = async n => { setIn(n); await sv("crm:invoices",n); };
   const st  = async n => { setT(n);  await sv("crm:templates",n); };
   const sgo = async n => { setGO(n); await sv("go:list",n); };
+  const sts = async n => { setTS(n); await sv("crm:transStmts",n); };
 
   const unpaidCount = payments.filter(p=>!p.paid).length;
-  const db = { uniforms,equips,invHist,agencies,uSales,eSales,orders,customers,payments,invoices,templates,groupOrders,
-    su,se,sih,sag,sus,ses,sor,sc,sp,si,st,sgo,toast_ };
+  const db = { uniforms,equips,invHist,agencies,uSales,eSales,orders,customers,payments,invoices,templates,groupOrders,transStmts,
+    su,se,sih,sag,sus,ses,sor,sc,sp,si,st,sgo,sts,toast_ };
 
   const goPage = (id) => { setPage(id); setDrw(false); };
 
@@ -1292,6 +1304,7 @@ function InventoryPage({db}){
   // ── CSV 임포트 처리 ──
   const [importMod, setImportMod] = useState(null); // {rows, type}
   const [dragOver, setDragOver] = useState(false);
+  const [imgConfirm, setImgConfirm] = useState(null); // {uniform, file, url}
 
   const handleCSVFile = (file) => {
     if(!file) return;
@@ -1311,12 +1324,65 @@ function InventoryPage({db}){
     reader.readAsText(file, "UTF-8");
   };
 
+  // ── 이미지 파일 → 유니폼 자동 매칭 ──
+  const handleImageFiles = async (files) => {
+    const imgFiles = Array.from(files).filter(f => f.type.startsWith("image/"));
+    if(imgFiles.length === 0){ toast_("이미지 파일이 아닙니다", false); return; }
+
+    for(const file of imgFiles){
+      // 파일명에서 확장자 제거
+      const rawName = file.name.replace(/\.[^.]+$/, "").trim();
+
+      // 유니폼 이름 매칭 (정확 일치 → 포함 일치)
+      let matched = uniforms.find(u => u.name === rawName);
+      if(!matched) matched = uniforms.find(u => rawName.includes(u.name) || u.name.includes(rawName));
+
+      if(!matched){
+        toast_(`❌ "${rawName}" 와 일치하는 유니폼을 찾을 수 없습니다.\n파일명을 유니폼명과 동일하게 맞춰주세요.`, false);
+        continue;
+      }
+
+      // 이미 이미지가 있으면 확인 팝업
+      if(matched.imgSrc){
+        setImgConfirm({ uniform: matched, file });
+        return; // 한 번에 하나씩 처리
+      }
+
+      // 이미지 업로드 & 저장
+      await applyImageToUniform(matched, file);
+    }
+  };
+
+  const applyImageToUniform = async (uniform, file) => {
+    toast_("⏳ 이미지 업로드 중...");
+    try {
+      const url = await uploadImage(file, `uniforms/${gid()}_${file.name}`);
+      const updated = uniforms.map(u => u.id === uniform.id ? {...u, imgSrc: url} : u);
+      await su(updated);
+      toast_(`✅ "${uniform.name}" 이미지 등록 완료!`);
+    } catch(e) {
+      console.error(e);
+      toast_("이미지 업로드 실패", false);
+    }
+  };
+
   const handleDrop = (e) => {
     e.preventDefault(); setDragOver(false);
-    const file = e.dataTransfer.files[0];
-    if(file && (file.name.endsWith(".csv") || file.name.endsWith(".xlsx"))){
-      handleCSVFile(file);
-    } else { toast_("CSV 파일만 지원합니다", false); }
+    const files = e.dataTransfer.files;
+    if(!files.length) return;
+
+    const first = files[0];
+    // CSV 파일인 경우
+    if(first.name.endsWith(".csv") || first.name.endsWith(".xlsx")){
+      handleCSVFile(first);
+      return;
+    }
+    // 이미지 파일인 경우
+    if(first.type.startsWith("image/")){
+      handleImageFiles(files);
+      return;
+    }
+    toast_("CSV 또는 이미지 파일만 지원합니다", false);
   };
 
   // ── 구글시트 템플릿 다운로드 ──
@@ -1374,7 +1440,7 @@ function InventoryPage({db}){
         </div>
       </div>
 
-      {/* ── CSV 드래그&드롭 영역 ── */}
+      {/* ── CSV / 이미지 드래그&드롭 영역 ── */}
       <div
         onDrop={handleDrop}
         onDragOver={e=>{e.preventDefault();setDragOver(true);}}
@@ -1385,14 +1451,19 @@ function InventoryPage({db}){
           marginBottom:16, cursor:"pointer", transition:"all 0.2s",
           background: dragOver?"rgba(59,130,246,0.08)":"transparent"
         }}
-        onClick={()=>{ const inp=document.createElement("input"); inp.type="file"; inp.accept=".csv"; inp.onchange=e=>handleCSVFile(e.target.files[0]); inp.click(); }}
+        onClick={()=>{ const inp=document.createElement("input"); inp.type="file"; inp.accept=".csv,image/*"; inp.multiple=true; inp.onchange=e=>{
+          const f=e.target.files[0];
+          if(!f)return;
+          if(f.name.endsWith(".csv"))handleCSVFile(f);
+          else if(f.type.startsWith("image/"))handleImageFiles(e.target.files);
+        }; inp.click(); }}
       >
         <div style={{fontSize:28,marginBottom:6}}>{dragOver?"⬇️":"📂"}</div>
         <div style={{fontSize:13,fontWeight:600,color:dragOver?"#93c5fd":"#64748b"}}>
-          {dragOver?"파일을 놓으세요!":"CSV 파일을 여기에 드래그하거나 클릭해서 선택"}
+          {dragOver?"파일을 놓으세요!":"CSV 파일 또는 유니폼 이미지를 드래그하세요"}
         </div>
         <div style={{fontSize:11,color:"#475569",marginTop:4}}>
-          구글시트에서 내보낸 .csv 파일 지원
+          CSV: 구글시트에서 내보낸 재고 파일 &nbsp;|&nbsp; 이미지: 파일명이 유니폼명과 같으면 자동 매칭
         </div>
       </div>
 
@@ -1477,6 +1548,23 @@ function InventoryPage({db}){
         onSaveUniforms={async(arr)=>{ await su([...arr,...uniforms]); toast_(`유니폼 ${arr.length}종 가져오기 완료!`); setImportMod(null); }}
         onSaveEquips={async(arr)=>{ await se([...arr,...equips]); toast_(`용품 ${arr.length}종 가져오기 완료!`); setImportMod(null); }}
       />}
+      {imgConfirm&&<Modal title="🖼 이미지 교체 확인" onClose={()=>setImgConfirm(null)}>
+        <div style={{textAlign:"center",marginBottom:16}}>
+          <div style={{fontSize:13,color:"#f1f5f9",marginBottom:12}}>
+            <b style={{color:"#f59e0b"}}>{imgConfirm.uniform.name}</b> 에 이미 등록된 이미지가 있습니다.
+          </div>
+          {imgConfirm.uniform.imgSrc && <img src={imgConfirm.uniform.imgSrc} style={{height:100,borderRadius:8,objectFit:"contain",marginBottom:12,border:"1px solid #334155"}} alt="기존"/>}
+          <div style={{fontSize:12,color:"#94a3b8"}}>새 이미지로 교체하시겠습니까?</div>
+        </div>
+        <div style={GS.mBtns}>
+          <SBtn onClick={async()=>{
+            const {uniform,file}=imgConfirm;
+            setImgConfirm(null);
+            await applyImageToUniform(uniform,file);
+          }} color="#f59e0b" full>✅ 교체하기</SBtn>
+          <SBtn onClick={()=>setImgConfirm(null)} color="#374151" full>취소</SBtn>
+        </div>
+      </Modal>}
     </div>
   );
 }
@@ -1649,7 +1737,7 @@ function UniformListView({ uniforms, onEdit, onDel, onIO, onAdd }) {
             return (
               <div key={u.id} style={{background:"#111827",border:`1px solid ${tot===0?"#ef4444":low?"#f59e0b":"#1e293b"}`,borderRadius:10,overflow:"hidden"}}>
                 <div style={{height:110,background:"#0b0f1a",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  {u.imgSrc ? <img src={u.imgSrc} style={{height:"100%",width:"100%",objectFit:"cover"}} alt=""/> : <span style={{fontSize:36,color:"#1e293b"}}>👕</span>}
+                  {u.imgSrc ? <img src={u.imgSrc} style={{height:"100%",width:"100%",objectFit:"contain",padding:4}} alt=""/> : <span style={{fontSize:36,color:"#1e293b"}}>👕</span>}
                 </div>
                 <div style={{padding:"10px 12px"}}>
                   <div style={{fontWeight:600,fontSize:13,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.name}</div>
@@ -2819,6 +2907,18 @@ function UnpaidMsgModal({ payment, templates, onClose }) {
 }
 
 function InvoicesPage({db}){
+  const [tab,setTab]=useState("invoice");
+  return <div>
+    <div style={{display:"flex",gap:6,marginBottom:14}}>
+      {[["invoice","🧾 세금계산서"],["transStmt","📄 거래명세표"]].map(([k,l])=>(
+        <div key={k} style={{padding:"7px 14px",borderRadius:8,background:tab===k?"#1e293b":"transparent",border:tab===k?"1px solid #f59e0b":"1px solid #334155",color:tab===k?"#f1f5f9":"#64748b",cursor:"pointer",fontSize:12,fontWeight:500}} onClick={()=>setTab(k)}>{l}</div>
+      ))}
+    </div>
+    {tab==="invoice"&&<InvoiceTab db={db}/>}
+    {tab==="transStmt"&&<TransStmtTab db={db}/>}
+  </div>;
+}
+function InvoiceTab({db}){
   const {invoices,customers,si,toast_}=db;
   const [addM,setAdd]=useState(false); const [prvId,setPrv]=useState(null); const [search,setSearch]=useState(""); const [yr,setYr]=useState(new Date().getFullYear());
   const fil=useMemo(()=>invoices.filter(i=>(!yr||i.issuedAt?.startsWith(String(yr)))&&(!search||(i.customerName||"").includes(search))),[invoices,yr,search]);
@@ -2909,6 +3009,265 @@ function InvPrintModal({invoice,onClose}){
       </table>
       <div style={{textAlign:"right",fontSize:12}}><div>공급가액: {won(i.supplyAmount)}</div><div>세액(10%): {won(i.tax)}</div><div style={{fontWeight:700,fontSize:15,marginTop:4}}>합계금액: {won(i.totalAmount)}</div></div>
       {i.memo&&<div style={{marginTop:10,fontSize:11,color:"#666"}}>비고: {i.memo}</div>}
+    </div>
+  </Modal>;
+}
+
+/* ═══════════════════════════════════════════════════════
+   거래명세표 탭
+═══════════════════════════════════════════════════════ */
+function TransStmtTab({db}){
+  const {transStmts,customers,sts,toast_}=db;
+  const [addM,setAdd]=useState(false); const [prvId,setPrv]=useState(null); const [search,setSearch]=useState(""); const [yr,setYr]=useState(new Date().getFullYear());
+  const fil=useMemo(()=>transStmts.filter(t=>(!yr||t.date?.startsWith(String(yr)))&&(!search||(t.customerName||"").includes(search))),[transStmts,yr,search]);
+  const totAmt=fil.reduce((a,t)=>a+Number(t.totalAmount||0),0);
+  const add=async d=>{ await sts([{...d,id:gid(),createdAt:td()},...transStmts]); toast_("거래명세표 발행!"); };
+  const del=async id=>{ await sts(transStmts.filter(t=>t.id!==id)); toast_("삭제"); };
+  const prv=transStmts.find(t=>t.id===prvId);
+  const gc={gridTemplateColumns:"90px 130px 1fr 100px 90px 100px 100px"};
+  return <div>
+    <div style={GS.toolbar}>
+      <select style={GS.sSel} value={yr} onChange={e=>setYr(Number(e.target.value))}>{[2024,2025,2026].map(y=><option key={y}>{y}년</option>)}</select>
+      <input style={{...GS.sInp,flex:1,maxWidth:200}} placeholder="거래처명 검색..." value={search} onChange={e=>setSearch(e.target.value)}/>
+      <SumPill label="합계금액" val={won(totAmt)} color="#3b82f6"/>
+      <SBtn onClick={()=>setAdd(true)} color="#3b82f6" style={{marginLeft:"auto"}}>+ 거래명세표 발행</SBtn>
+    </div>
+    {fil.length===0?<EmptyState icon="📄" msg="발행된 거래명세표 없음"/>:
+      <div style={GS.tbl}>
+        <div style={{...GS.tRow,...gc,background:"#0b0f1a",borderTop:"none",fontSize:10,fontWeight:600,color:"#64748b"}}><span>발행일</span><span>거래처</span><span>품목 요약</span><span style={{textAlign:"right"}}>공급가액</span><span style={{textAlign:"right"}}>세액</span><span style={{textAlign:"right"}}>합계</span><span style={{textAlign:"center"}}>관리</span></div>
+        {fil.map(t=><div key={t.id} style={{...GS.tRow,...gc}}>
+          <span style={{fontSize:11,color:"#94a3b8"}}>{t.date}</span>
+          <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.customerName||"-"}</span>
+          <span style={{fontSize:11,color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{(t.items||[]).slice(0,3).map(i=>i.name).join(", ")||"-"}{(t.items||[]).length>3?" ...":""}</span>
+          <span style={{textAlign:"right",fontWeight:600,color:"#3b82f6"}}>{won(t.supplyAmount)}</span>
+          <span style={{textAlign:"right",color:"#64748b"}}>{won(t.taxAmount)}</span>
+          <span style={{textAlign:"right",fontWeight:700}}>{won(t.totalAmount)}</span>
+          <div style={{display:"flex",gap:3,justifyContent:"center"}}><MBtn onClick={()=>setPrv(t.id)}>인쇄</MBtn><MBtn red onClick={()=>del(t.id)}>삭제</MBtn></div>
+        </div>)}
+      </div>
+    }
+    {addM&&<TransStmtModal customers={customers} onClose={()=>setAdd(false)} onSave={d=>{add(d);setAdd(false);}}/>}
+    {prv&&<TransStmtPrintModal stmt={prv} onClose={()=>setPrv(null)}/>}
+  </div>;
+}
+
+/* ═══════════════════════════════════════════════════════
+   거래명세표 생성 모달
+═══════════════════════════════════════════════════════ */
+function TransStmtModal({customers,onClose,onSave}){
+  const [f,setF]=useState({
+    date:td(), customerName:"", bizNum:"", receiver:"",
+    items:[{id:gid(),month:"",day:"",name:"",sizeType:"",qty:1,unitPrice:"",supplyAmt:"",taxAmt:""}],
+    unpaid:"", memo:""
+  });
+  const s=(k,v)=>setF(p=>({...p,[k]:v}));
+
+  const addItem=()=>setF(p=>({...p,items:[...p.items,{id:gid(),month:"",day:"",name:"",sizeType:"",qty:1,unitPrice:"",supplyAmt:"",taxAmt:""}]}));
+  const updItem=(id,k,v)=>setF(p=>({...p,items:p.items.map(it=>{
+    if(it.id!==id)return it;
+    const u={...it,[k]:v};
+    if(k==="qty"||k==="unitPrice"){
+      const total=Number(u.qty||0)*Number(u.unitPrice||0);
+      u.supplyAmt=Math.round(total/1.1);
+      u.taxAmt=total-u.supplyAmt;
+    }
+    return u;
+  })}));
+  const delItem=id=>setF(p=>({...p,items:p.items.filter(it=>it.id!==id)}));
+
+  const supplyTotal=f.items.reduce((a,it)=>a+Number(it.supplyAmt||0),0);
+  const taxTotal=f.items.reduce((a,it)=>a+Number(it.taxAmt||0),0);
+  const totalAmt=supplyTotal+taxTotal;
+
+  const fillC=name=>{ const c=customers.find(c=>c.name===name); if(c)setF(p=>({...p,customerName:c.name,bizNum:c.bizNum||""})); else s("customerName",name); };
+
+  return <Modal title="📄 거래명세표 발행" onClose={onClose} wide>
+    <div style={GS.fGrid}>
+      <MFR label="발행일"><input type="date" style={GS.inp} value={f.date} onChange={e=>s("date",e.target.value)}/></MFR>
+      <MFR label="거래처명 *">
+        <input style={GS.inp} value={f.customerName} onChange={e=>fillC(e.target.value)} list="ts-custs" placeholder="화성여성연맹"/>
+        <datalist id="ts-custs">{customers.map(c=><option key={c.id} value={c.name}/>)}</datalist>
+      </MFR>
+      <MFR label="등록번호"><input style={GS.inp} value={f.bizNum} onChange={e=>s("bizNum",e.target.value)} placeholder="000-00-00000"/></MFR>
+      <MFR label="인수자"><input style={GS.inp} value={f.receiver} onChange={e=>s("receiver",e.target.value)} placeholder="인수자명"/></MFR>
+    </div>
+
+    <MFR label="품목 목록">
+      <div style={{border:"1px solid #334155",borderRadius:7,overflow:"hidden",marginBottom:6}}>
+        <div className="tb-scroll-x">
+          <div style={{display:"grid",gridTemplateColumns:"45px 45px 1fr 100px 55px 80px 90px 80px 26px",gap:4,padding:"5px 8px",background:"#0b0f1a",fontSize:10,fontWeight:600,color:"#64748b",minWidth:600}}>
+            <span>월</span><span>일</span><span>품목/규격</span><span>사이즈/종류</span><span>수량</span><span>단가</span><span>공급가액</span><span>세액</span><span></span>
+          </div>
+          {f.items.map(it=>(
+            <div key={it.id} style={{display:"grid",gridTemplateColumns:"45px 45px 1fr 100px 55px 80px 90px 80px 26px",gap:4,padding:"4px 8px",borderTop:"1px solid #1e293b",alignItems:"center",minWidth:600}}>
+              <input type="number" style={{...GS.inp,padding:"4px 4px",fontSize:11,textAlign:"center"}} value={it.month} onChange={e=>updItem(it.id,"month",e.target.value)} placeholder="월"/>
+              <input type="number" style={{...GS.inp,padding:"4px 4px",fontSize:11,textAlign:"center"}} value={it.day} onChange={e=>updItem(it.id,"day",e.target.value)} placeholder="일"/>
+              <input style={{...GS.inp,padding:"4px 6px",fontSize:11}} value={it.name} onChange={e=>updItem(it.id,"name",e.target.value)} placeholder="아스트리아 민트"/>
+              <input style={{...GS.inp,padding:"4px 6px",fontSize:11}} value={it.sizeType} onChange={e=>updItem(it.id,"sizeType",e.target.value)} placeholder="기성복"/>
+              <input type="number" style={{...GS.inp,padding:"4px 4px",fontSize:11,textAlign:"center"}} value={it.qty} onChange={e=>updItem(it.id,"qty",e.target.value)} min={1}/>
+              <input type="number" style={{...GS.inp,padding:"4px 6px",fontSize:11,textAlign:"right"}} value={it.unitPrice} onChange={e=>updItem(it.id,"unitPrice",e.target.value)} placeholder="0"/>
+              <span style={{textAlign:"right",fontSize:11,color:"#3b82f6"}}>{fmt(it.supplyAmt)}</span>
+              <span style={{textAlign:"right",fontSize:11,color:"#64748b"}}>{fmt(it.taxAmt)}</span>
+              <button onClick={()=>delItem(it.id)} style={{width:22,height:22,background:"#7f1d1d",border:"none",borderRadius:3,color:"white",cursor:"pointer",fontSize:10}}>✕</button>
+            </div>
+          ))}
+        </div>
+      </div>
+      <SBtn onClick={addItem} color="#374151">+ 품목 추가</SBtn>
+    </MFR>
+
+    <div style={{background:"#0b0f1a",borderRadius:7,padding:"10px 12px",marginBottom:10}}>
+      {[["공급가액",won(supplyTotal)],["세액",won(taxTotal)]].map(([l,v])=><div key={l} style={{display:"flex",justifyContent:"space-between",marginBottom:4,fontSize:12}}><span style={{color:"#94a3b8"}}>{l}</span><span>{v}</span></div>)}
+      <div style={{display:"flex",justifyContent:"space-between",borderTop:"1px solid #334155",paddingTop:6,marginTop:2}}><span style={{fontWeight:700}}>합계금액</span><span style={{fontWeight:700,color:"#3b82f6",fontSize:14}}>{won(totalAmt)}</span></div>
+    </div>
+    <MFR label="미수금">
+      <input type="number" style={GS.inp} value={f.unpaid} onChange={e=>s("unpaid",e.target.value)} placeholder="0"/>
+    </MFR>
+    <div style={GS.mBtns}>
+      <SBtn onClick={()=>{if(!f.customerName.trim()||f.items.length===0)return;onSave({...f,supplyAmount:supplyTotal,taxAmount:taxTotal,totalAmount:totalAmt});}} color="#3b82f6" full>발행</SBtn>
+      <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
+    </div>
+  </Modal>;
+}
+
+/* ═══════════════════════════════════════════════════════
+   거래명세표 인쇄 미리보기
+═══════════════════════════════════════════════════════ */
+function TransStmtPrintModal({stmt,onClose}){
+  const pRef=useRef();
+  const hp=()=>{ const s=document.createElement("style"); s.textContent=`@media print{body>*:not(#tsp){display:none!important}#tsp{display:block!important;position:fixed;top:0;left:0;width:100%;z-index:9999;background:white}@page{margin:10mm;size:A4;}}`; document.head.appendChild(s); pRef.current.id="tsp"; window.print(); document.head.removeChild(s); };
+
+  const d=stmt;
+  const dateObj=d.date?new Date(d.date):new Date();
+  const yy=dateObj.getFullYear(); const mm=dateObj.getMonth()+1; const dd=dateObj.getDate();
+  const supplyTotal=Number(d.supplyAmount||0);
+  const taxTotal=Number(d.taxAmount||0);
+  const totalAmt=Number(d.totalAmount||0);
+  const unpaid=Number(d.unpaid||0);
+  const ci=COMPANY_INFO;
+
+  const bdr="1px solid #000";
+  const cellS={border:bdr,padding:"3px 6px",fontSize:11,textAlign:"center",verticalAlign:"middle"};
+  const cellR={...cellS,textAlign:"right"};
+  const hdrS={...cellS,fontWeight:700,background:"#f5f5f5",fontSize:10};
+
+  return <Modal title="📄 거래명세표 미리보기" onClose={onClose} wide>
+    <div style={{textAlign:"right",marginBottom:8,display:"flex",gap:6,justifyContent:"flex-end"}}>
+      <SBtn onClick={hp} color="#3b82f6">🖨 인쇄/PDF</SBtn>
+    </div>
+    <div ref={pRef} style={{background:"white",color:"black",padding:16,fontFamily:"'Malgun Gothic','Apple SD Gothic Neo',sans-serif",maxWidth:780,margin:"0 auto"}}>
+      {/* ── 타이틀 영역 ── */}
+      <table style={{width:"100%",borderCollapse:"collapse",border:bdr,marginBottom:0}}>
+        <tbody>
+          <tr>
+            <td colSpan={5} rowSpan={2} style={{...cellS,fontSize:22,fontWeight:700,letterSpacing:6,padding:"8px 14px",textAlign:"center",borderBottom:"none"}}>
+              거 래 명 세 표
+              <div style={{fontSize:10,fontWeight:400,letterSpacing:0,color:"#666",marginTop:2}}>(공급받는자보관용)</div>
+            </td>
+            <td style={{...hdrS,width:60}}>책번호</td>
+            <td style={{...cellS,width:40}}>권</td>
+            <td style={{...hdrS,width:60}}>호</td>
+          </tr>
+          <tr>
+            <td style={{...hdrS}}>일련번호</td>
+            <td colSpan={2} style={cellS}></td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ── 헤더 정보 ── */}
+      <table style={{width:"100%",borderCollapse:"collapse",border:bdr,borderTop:"none"}}>
+        <tbody>
+          <tr>
+            <td style={{...cellS,width:100,fontSize:12}}>{yy}년 {mm}월 {dd}일</td>
+            <td style={{...cellS,width:40}}>NO.</td>
+            <td style={{...cellS,width:1}}></td>
+            <td style={hdrS} rowSpan={4}>공{"\n"}급{"\n"}자</td>
+            <td style={{...hdrS,width:80}}>등록번호</td>
+            <td colSpan={2} style={{...cellS,fontSize:11}}>{ci.bizNum}</td>
+          </tr>
+          <tr>
+            <td colSpan={2} rowSpan={2} style={{...cellS,fontSize:14,fontWeight:700,padding:"6px 10px",textAlign:"center"}}>
+              {d.customerName} 귀 하
+            </td>
+            <td rowSpan={2} style={{...cellS,fontSize:10,color:"#666",width:1}}>아래와 같이 계산합니다.</td>
+            <td style={{...hdrS,width:80}}>상 호</td>
+            <td style={{...cellS,minWidth:60}}>{ci.name}</td>
+            <td style={{...cellS,minWidth:80}}>성명: {ci.owner}</td>
+          </tr>
+          <tr>
+            <td style={{...hdrS}}>사업장{"\n"}소재지</td>
+            <td colSpan={2} style={{...cellS,fontSize:10,textAlign:"left",padding:"3px 5px"}}>{ci.address}</td>
+          </tr>
+          <tr>
+            <td style={{...hdrS,fontSize:12}}>합계금액</td>
+            <td colSpan={2} style={{...cellS,fontSize:14,fontWeight:700}}>{fmt(totalAmt)} 원정</td>
+            <td style={{...hdrS}}>업태</td>
+            <td style={cellS}>{ci.bizType}</td>
+            <td style={{...cellS,fontSize:10}}>{ci.bizCategory}</td>
+          </tr>
+        </tbody>
+      </table>
+
+      {/* ── 품목 테이블 ── */}
+      <table style={{width:"100%",borderCollapse:"collapse",border:bdr,borderTop:"none"}}>
+        <thead>
+          <tr>
+            <td style={{...hdrS,width:30}}>월</td>
+            <td style={{...hdrS,width:30}}>일</td>
+            <td style={{...hdrS,minWidth:120}}>품목/규격</td>
+            <td style={{...hdrS,width:80}}>사이즈/종류</td>
+            <td style={{...hdrS,width:40}}>수량</td>
+            <td style={{...hdrS,width:65}}>단가</td>
+            <td style={{...hdrS,width:85}}>단가✕수량</td>
+            <td style={{...hdrS,width:85}}>공급가액</td>
+            <td style={{...hdrS,width:65}}>세액</td>
+          </tr>
+        </thead>
+        <tbody>
+          {(d.items||[]).map((it,idx)=>{
+            const qtyTotal=Number(it.qty||0)*Number(it.unitPrice||0);
+            return(
+              <tr key={idx}>
+                <td style={cellS}>{it.month||""}</td>
+                <td style={cellS}>{it.day||""}</td>
+                <td style={{...cellS,textAlign:"left",padding:"3px 6px"}}>{it.name||""}</td>
+                <td style={cellS}>{it.sizeType||""}</td>
+                <td style={cellS}>{it.qty||""}</td>
+                <td style={cellR}>{fmt(it.unitPrice)}</td>
+                <td style={cellR}>{fmt(qtyTotal)}</td>
+                <td style={cellR}>{fmt(it.supplyAmt)}</td>
+                <td style={cellR}>{it.taxAmt?fmt(it.taxAmt):"-"}</td>
+              </tr>
+            );
+          })}
+          {/* 빈 행 채우기 (최소 표시) */}
+          {(d.items||[]).length<10 && Array.from({length:Math.max(0,3-(d.items||[]).length)}).map((_,i)=>(
+            <tr key={`empty-${i}`}><td style={cellS}></td><td style={cellS}></td><td style={cellS}></td><td style={cellS}></td><td style={cellS}></td><td style={cellS}></td><td style={cellS}></td><td style={cellS}></td><td style={cellS}></td></tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr>
+            <td colSpan={7} style={{...hdrS,textAlign:"center",fontSize:11}}>소 계</td>
+            <td style={{...cellR,fontWeight:700}}>{fmt(supplyTotal)}</td>
+            <td style={{...cellR,fontWeight:700}}>{fmt(taxTotal)}</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      {/* ── 하단: 미수금, 합계, 인수자 ── */}
+      <table style={{width:"100%",borderCollapse:"collapse",border:bdr,borderTop:"none"}}>
+        <tbody>
+          <tr>
+            <td style={{...hdrS,width:80}}>미수금</td>
+            <td style={{...cellS,width:180}}></td>
+            <td style={{...hdrS,width:80}}>합 계</td>
+            <td style={{...cellR,fontWeight:700,fontSize:13}}>{fmt(totalAmt)}</td>
+            <td style={{...hdrS,width:60}}>인수자</td>
+            <td style={{...cellS,minWidth:100}}>{d.receiver||d.customerName||""}</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </Modal>;
 }
