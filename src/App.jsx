@@ -4,8 +4,6 @@ import { db } from "./firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { storage } from "./firebase";
 import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { storage } from "./firebase";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
 /* ═══════════════════════════════════════════════════════
    GLOBAL HELPERS — Firebase Firestore 기반
@@ -27,6 +25,7 @@ const ld = async (k, d) => {
 // Firebase Storage 이미지 업로드
 const uploadImage = async (file, path) => {
   try {
+    if(file.size > 5 * 1024 * 1024) throw new Error("5MB 초과");
     const storageRef = ref(storage, path);
     await uploadBytes(storageRef, file);
     return await getDownloadURL(storageRef);
@@ -40,18 +39,14 @@ const uploadImage = async (file, path) => {
     });
   }
 };
+
 const gid = () => Date.now().toString(36)+Math.random().toString(36).slice(2,5);
 const td  = () => new Date().toISOString().slice(0,10);
 const fmt = n => Number(n||0).toLocaleString("ko-KR");
 const won = n => fmt(n)+"원";
 
-// Firebase Storage 이미지 업로드
-const uploadImage = async (file, path) => {
-  if(file.size > 5 * 1024 * 1024) throw new Error("5MB 초과");
-  const storageRef = ref(storage, path);
-  await uploadBytes(storageRef, file);
-  return await getDownloadURL(storageRef);
-};
+// CSV 내보내기
+const exportCSV = (filename, headers, rows) => {
   const BOM = "\uFEFF";
   const lines = [headers.join(","), ...rows.map(r => r.map(c => `"${String(c??"-").replace(/"/g,'""')}"`).join(","))];
   const blob = new Blob([BOM + lines.join("\n")], { type: "text/csv;charset=utf-8;" });
