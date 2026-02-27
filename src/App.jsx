@@ -128,15 +128,18 @@ function Loading() {
 // 카카오 SDK 동적 로드
 const KAKAO_JS_KEY = "349e73eae2fbba62ebfd4369f85b7c2b";
 function loadKakaoSDK() {
-  return new Promise((resolve) => {
-    if (window.Kakao) { resolve(); return; }
-    const s = document.createElement("script");
-    s.src = "https://t1.kakaocdn.net/kakao_js_sdk/2.7.2/kakao.min.js";
-    s.crossOrigin = "anonymous";
-    s.onload = () => {
+  return new Promise((resolve, reject) => {
+    if (window.Kakao) {
       if (!window.Kakao.isInitialized()) window.Kakao.init(KAKAO_JS_KEY);
+      resolve(); return;
+    }
+    const s = document.createElement("script");
+    s.src = "https://developers.kakao.com/sdk/js/kakao.js";
+    s.onload = () => {
+      if (window.Kakao && !window.Kakao.isInitialized()) window.Kakao.init(KAKAO_JS_KEY);
       resolve();
     };
+    s.onerror = () => reject(new Error("SDK load failed"));
     document.head.appendChild(s);
   });
 }
