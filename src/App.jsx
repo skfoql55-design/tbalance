@@ -1272,6 +1272,7 @@ function InventoryPage({db}){
   const updU = async d=>{ await su(uniforms.map(u=>u.id===d.id?{...u,...d}:u)); toast_("수정 완료!"); };
   const delU = async id=>{ await su(uniforms.filter(u=>u.id!==id)); toast_("삭제"); };
   const addE = async d=>{ const n=[{...d,id:gid()},...equips]; await se(n); toast_("용품 등록!"); };
+  const updE = async d=>{ await se(equips.map(e=>e.id===d.id?{...e,...d}:e)); toast_("수정 완료!"); };
   const delE = async id=>{ await se(equips.filter(e=>e.id!==id)); toast_("삭제"); };
   const addAg= async d=>{ const n=[{...d,id:gid()},...agencies]; await sag(n); toast_("대리점 등록!"); };
   const delAg= async id=>{ await sag(agencies.filter(a=>a.id!==id)); toast_("삭제"); };
@@ -1518,17 +1519,22 @@ function InventoryPage({db}){
         <div style={GS.toolbar}><div style={{fontWeight:600}}>용품 목록</div><SBtn onClick={()=>setEM("add")} color="#10b981" style={{marginLeft:"auto"}}>+ 용품 등록</SBtn></div>
         {equips.length===0?<EmptyState icon="🏓" msg="등록된 용품 없음"/>:
           <div style={GS.tbl}>
-            <div style={{...GS.tRow,gridTemplateColumns:"90px 1fr 100px 70px 70px 130px",background:"#0b0f1a",borderTop:"none",fontSize:10,fontWeight:600,color:"#64748b"}}>
-              <span>카테고리</span><span>제품명</span><span>세부정보</span><span style={{textAlign:"center"}}>재고</span><span></span><span style={{textAlign:"center"}}>관리</span>
+            <div style={{...GS.tRow,gridTemplateColumns:"80px 1fr 80px 55px 80px 60px 150px",background:"#0b0f1a",borderTop:"none",fontSize:10,fontWeight:600,color:"#64748b"}}>
+              <span>카테고리</span><span>제품명</span><span>세부정보</span><span style={{textAlign:"center"}}>재고</span><span style={{textAlign:"right"}}>판매가</span><span style={{textAlign:"center"}}>구분</span><span style={{textAlign:"center"}}>관리</span>
             </div>
-            {equips.map(e=>{ const s=Number(e.stock||0); return(
-              <div key={e.id} style={{...GS.tRow,gridTemplateColumns:"90px 1fr 100px 70px 70px 130px"}}>
+            {equips.map(e=>{ const s=Number(e.stock||0); const pr=e.prices||{}; const mainPrice=e.source==="자사"?pr.retailPrice:pr.sellPrice; return(
+              <div key={e.id} style={{...GS.tRow,gridTemplateColumns:"80px 1fr 80px 55px 80px 60px 150px"}}>
                 <span style={{background:"#1e293b",color:"#94a3b8",padding:"2px 6px",borderRadius:4,fontSize:10,textAlign:"center"}}>{e.category}</span>
                 <span style={{fontWeight:500}}>{e.name}</span>
                 <span style={{fontSize:11,color:"#64748b"}}>{[e.grip,e.color].filter(Boolean).join("·")}</span>
                 <span style={{textAlign:"center",fontWeight:700,color:s===0?"#ef4444":s<=3?"#f59e0b":"#10b981"}}>{s===0?"품절":s}</span>
-                <span></span>
+                <span style={{textAlign:"right",fontSize:11,color:"#f59e0b",fontWeight:600}}>{mainPrice?won(mainPrice):"-"}</span>
+                <span style={{textAlign:"center"}}>{e.source&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,fontWeight:600,
+                  background:e.source==="자사"?"rgba(59,130,246,0.15)":"rgba(139,92,246,0.15)",
+                  color:e.source==="자사"?"#93c5fd":"#c4b5fd"
+                }}>{e.source}</span>}</span>
                 <div style={{display:"flex",gap:4,justifyContent:"center"}}>
+                  <SBtn onClick={()=>setEM({mode:"edit",data:e})} color="#374151">✏️</SBtn>
                   <SBtn onClick={()=>setIO({type:"equip",item:e,mode:"in"})} color="#1d4ed8">입고</SBtn>
                   <SBtn onClick={()=>setIO({type:"equip",item:e,mode:"out"})} color="#374151">출고</SBtn>
                   <SBtn onClick={()=>delE(e.id)} color="#7f1d1d">🗑</SBtn>
@@ -1578,6 +1584,7 @@ function InventoryPage({db}){
       {uMod==="add"&&<UniformModal onClose={()=>setUM(null)} onSave={d=>{addU(d);setUM(null);}}/>}
       {uMod?.mode==="edit"&&<UniformModal initial={uMod.data} onClose={()=>setUM(null)} onSave={d=>{updU({...uMod.data,...d});setUM(null);}}/>}
       {eMod==="add"&&<EquipModal onClose={()=>setEM(null)} onSave={d=>{addE(d);setEM(null);}}/>}
+      {eMod?.mode==="edit"&&<EquipModal initial={eMod.data} onClose={()=>setEM(null)} onSave={d=>{updE({...eMod.data,...d});setEM(null);}}/>}
       {agMod&&<AgencyModal onClose={()=>setAM(null)} onSave={d=>{addAg(d);setAM(null);}}/>}
       {ioMod&&<IOModal modal={ioMod} agencies={agencies} onClose={()=>setIO(null)} onSave={d=>{doIO(d);setIO(null);}}/>}
       {importMod&&<CSVImportModal modal={importMod} uniforms={uniforms} equips={equips}
@@ -1791,7 +1798,26 @@ function UniformListView({ uniforms, onEdit, onDel, onIO, onAdd }) {
                 </div>
                 <div style={{padding:"10px 12px"}}>
                   <div style={{fontWeight:600,fontSize:13,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.name}</div>
-                  <div style={{fontSize:11,color:"#64748b",marginBottom:6}}>{u.year}년도</div>
+                  <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
+                    <span style={{fontSize:11,color:"#64748b"}}>{u.year}년도</span>
+                    {u.source&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,fontWeight:600,
+                      background:u.source==="자사"?"rgba(59,130,246,0.15)":"rgba(139,92,246,0.15)",
+                      color:u.source==="자사"?"#93c5fd":"#c4b5fd",
+                      border:`1px solid ${u.source==="자사"?"#3b82f6":"#8b5cf6"}`
+                    }}>{u.source}</span>}
+                  </div>
+                  {/* 가격 요약 */}
+                  {u.prices&&Object.values(u.prices).some(v=>v)&&(
+                    <div style={{background:"#0b0f1a",borderRadius:5,padding:"4px 8px",marginBottom:6,fontSize:10,color:"#64748b"}}>
+                      {u.source==="자사"?(
+                        <>{u.prices.retailPrice&&<span>소비자가 <b style={{color:"#f59e0b"}}>{won(u.prices.retailPrice)}</b></span>}
+                        {u.prices.cost&&u.prices.retailPrice&&<span style={{marginLeft:6}}>마진 <b style={{color:"#10b981"}}>{Math.round((1-Number(u.prices.cost)/Number(u.prices.retailPrice))*100)}%</b></span>}</>
+                      ):(
+                        <>{u.prices.sellPrice&&<span>판매가 <b style={{color:"#f59e0b"}}>{won(u.prices.sellPrice)}</b></span>}
+                        {u.prices.purchasePrice&&u.prices.sellPrice&&<span style={{marginLeft:6}}>마진 <b style={{color:"#10b981"}}>{Math.round((1-Number(u.prices.purchasePrice)/Number(u.prices.sellPrice))*100)}%</b></span>}</>
+                      )}
+                    </div>
+                  )}
                   <div style={{display:"flex",justifyContent:"space-between",background:"#0b0f1a",borderRadius:5,padding:"5px 8px",marginBottom:8}}>
                     <span style={{fontSize:11,color:"#64748b"}}>총 재고</span>
                     <span style={{fontWeight:700,color:tot===0?"#ef4444":low?"#f59e0b":"#10b981"}}>{tot}벌</span>
@@ -1819,9 +1845,12 @@ function UniformModal({onClose,onSave,initial}){
   const [sizes,setSizes]=useState(initial?.sizes||{});
   const [cs,setCS]=useState("");
   const [uploading,setUploading]=useState(false);
+  const [source,setSource]=useState(initial?.source||"자사"); // 자사 / 타사
+  const [prices,setPrices]=useState(initial?.prices||{});
   const imgRef=useRef();
   const toggleSz=sz=>setSizes(p=>p[sz]!==undefined?(()=>{const n={...p};delete n[sz];return n;})():{...p,[sz]:0});
   const addCustom=()=>{if(cs.trim()&&sizes[cs.trim()]===undefined){setSizes(p=>({...p,[cs.trim()]:0}));setCS("");}};
+  const setP=(k,v)=>setPrices(p=>({...p,[k]:v}));
 
   const handleImageFile = async (file) => {
     if(!file) return;
@@ -1832,6 +1861,21 @@ function UniformModal({onClose,onSave,initial}){
     } catch(e) { console.error(e); }
     setUploading(false);
   };
+
+  const OWN_PRICE_FIELDS = [
+    {key:"cost",label:"원가"},
+    {key:"agencyPrice",label:"대리점가"},
+    {key:"shopPrice",label:"탁구장가"},
+    {key:"onlineMinPrice",label:"인터넷최저가"},
+    {key:"retailPrice",label:"소비자가"},
+  ];
+  const BUY_PRICE_FIELDS = [
+    {key:"purchasePrice",label:"매입가"},
+    {key:"sellPrice",label:"판매가"},
+    {key:"onlineSellPrice",label:"인터넷판매가"},
+    {key:"friendPrice",label:"지인가"},
+  ];
+  const priceFields = source==="자사" ? OWN_PRICE_FIELDS : BUY_PRICE_FIELDS;
 
   return <Modal title={isEdit?"✏️ 유니폼 수정":"유니폼 등록"} onClose={onClose}>
     <input type="file" accept="image/*" ref={imgRef} style={{display:"none"}} onChange={e=>handleImageFile(e.target.files[0])} />
@@ -1851,6 +1895,41 @@ function UniformModal({onClose,onSave,initial}){
         {uploading&&<div style={{fontSize:11,color:"#f59e0b",marginTop:4}}>☁️ Firebase Storage에 업로드 중...</div>}
       </MFR>
     </div>
+
+    {/* 제품 구분 */}
+    <MFR label="제품 구분">
+      <div style={GS.chips}>
+        <div style={{...SI.chip,...(source==="자사"?{background:"#1d4ed8",borderColor:"#3b82f6",color:"#fff"}:{})}} onClick={()=>setSource("자사")}>🏭 자사 제품</div>
+        <div style={{...SI.chip,...(source==="타사"?{background:"#7c3aed",borderColor:"#8b5cf6",color:"#fff"}:{})}} onClick={()=>setSource("타사")}>📦 타사 매입</div>
+      </div>
+    </MFR>
+
+    {/* 가격 입력 */}
+    <MFR label={source==="자사"?"💰 자사 제품 가격":"💰 타사 매입 가격"}>
+      <div style={{background:"#0b0f1a",borderRadius:8,padding:"10px 12px",border:"1px solid #1e293b"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:8}}>
+          {priceFields.map(f=>(
+            <div key={f.key}>
+              <div style={{fontSize:10,color:"#64748b",marginBottom:3}}>{f.label}</div>
+              <input type="number" style={{...GS.inp,padding:"5px 8px",fontSize:12}} value={prices[f.key]||""} onChange={e=>setP(f.key,e.target.value)} placeholder="0"/>
+            </div>
+          ))}
+        </div>
+        {source==="자사"&&prices.cost&&prices.retailPrice&&(
+          <div style={{marginTop:8,fontSize:11,color:"#64748b",borderTop:"1px solid #1e293b",paddingTop:6}}>
+            마진율: <span style={{color:"#10b981",fontWeight:700}}>{Math.round((1-Number(prices.cost)/Number(prices.retailPrice))*100)}%</span>
+            <span style={{marginLeft:12}}>마진액: <span style={{color:"#f59e0b",fontWeight:700}}>{won(Number(prices.retailPrice)-Number(prices.cost))}</span></span>
+          </div>
+        )}
+        {source==="타사"&&prices.purchasePrice&&prices.sellPrice&&(
+          <div style={{marginTop:8,fontSize:11,color:"#64748b",borderTop:"1px solid #1e293b",paddingTop:6}}>
+            마진율: <span style={{color:"#10b981",fontWeight:700}}>{Math.round((1-Number(prices.purchasePrice)/Number(prices.sellPrice))*100)}%</span>
+            <span style={{marginLeft:12}}>마진액: <span style={{color:"#f59e0b",fontWeight:700}}>{won(Number(prices.sellPrice)-Number(prices.purchasePrice))}</span></span>
+          </div>
+        )}
+      </div>
+    </MFR>
+
     <MFR label="사이즈 선택">
       <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>{SIZES.map(sz=><div key={sz} style={{...SI.chip,...(sizes[sz]!==undefined?SI.chipA:{})}} onClick={()=>toggleSz(sz)}>{sz}</div>)}</div>
       <div style={{display:"flex",gap:5}}><input style={{...GS.inp,flex:1}} placeholder="직접입력" value={cs} onChange={e=>setCS(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCustom()}/><SBtn onClick={addCustom} color="#374151">추가</SBtn></div>
@@ -1874,16 +1953,36 @@ function UniformModal({onClose,onSave,initial}){
       </MFR>
     )}
     <div style={GS.mBtns}>
-      <SBtn onClick={()=>{if(!name.trim()||uploading)return;onSave({name,year,imgSrc,sizes});}} color={isEdit?"#10b981":"#3b82f6"} full disabled={uploading}>
+      <SBtn onClick={()=>{if(!name.trim()||uploading)return;onSave({name,year,imgSrc,sizes,source,prices});}} color={isEdit?"#10b981":"#3b82f6"} full disabled={uploading}>
         {uploading?"⏳ 이미지 업로드 중...":(isEdit?"✅ 수정 완료":"등록")}
       </SBtn>
       <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
     </div>
   </Modal>;
 }
-function EquipModal({onClose,onSave}){
-  const [name,setName]=useState(""); const [cat,setCat]=useState("라켓"); const [stock,setStock]=useState(0); const [grip,setGrip]=useState(""); const [color,setColor]=useState(""); const [memo,setMemo]=useState("");
-  return <Modal title="용품 등록" onClose={onClose}>
+function EquipModal({onClose,onSave,initial}){
+  const isEdit=!!initial;
+  const [name,setName]=useState(initial?.name||""); const [cat,setCat]=useState(initial?.category||"라켓"); const [stock,setStock]=useState(initial?.stock||0); const [grip,setGrip]=useState(initial?.grip||""); const [color,setColor]=useState(initial?.color||""); const [memo,setMemo]=useState(initial?.memo||"");
+  const [source,setSource]=useState(initial?.source||"타사");
+  const [prices,setPrices]=useState(initial?.prices||{});
+  const setP=(k,v)=>setPrices(p=>({...p,[k]:v}));
+
+  const OWN_PRICE_FIELDS = [
+    {key:"cost",label:"원가"},
+    {key:"agencyPrice",label:"대리점가"},
+    {key:"shopPrice",label:"탁구장가"},
+    {key:"onlineMinPrice",label:"인터넷최저가"},
+    {key:"retailPrice",label:"소비자가"},
+  ];
+  const BUY_PRICE_FIELDS = [
+    {key:"purchasePrice",label:"매입가"},
+    {key:"sellPrice",label:"판매가"},
+    {key:"onlineSellPrice",label:"인터넷판매가"},
+    {key:"friendPrice",label:"지인가"},
+  ];
+  const priceFields = source==="자사" ? OWN_PRICE_FIELDS : BUY_PRICE_FIELDS;
+
+  return <Modal title={isEdit?"✏️ 용품 수정":"용품 등록"} onClose={onClose}>
     <MFR label="카테고리"><div style={GS.chips}>{EQUIP_CATS.map(c=><div key={c} style={{...SI.chip,...(cat===c?SI.chipA:{})}} onClick={()=>setCat(c)}>{c}</div>)}</div></MFR>
     <MFR label="제품명 *"><input style={GS.inp} value={name} onChange={e=>setName(e.target.value)} placeholder="예) 테너지05 레드"/></MFR>
     {cat==="라켓"&&<MFR label="그립"><div style={GS.chips}>{["FL","ST","중펜","AN"].map(g=><div key={g} style={{...SI.chip,...(grip===g?SI.chipA:{})}} onClick={()=>setGrip(p=>p===g?"":g)}>{g}</div>)}</div></MFR>}
@@ -1891,8 +1990,43 @@ function EquipModal({onClose,onSave}){
       <MFR label="색상/규격"><input style={GS.inp} value={color} onChange={e=>setColor(e.target.value)} placeholder="레드, 블랙"/></MFR>
       <MFR label="초기 재고"><input type="number" style={GS.inp} min={0} value={stock} onChange={e=>setStock(e.target.value)}/></MFR>
     </div>
+
+    {/* 제품 구분 */}
+    <MFR label="제품 구분">
+      <div style={GS.chips}>
+        <div style={{...SI.chip,...(source==="자사"?{background:"#1d4ed8",borderColor:"#3b82f6",color:"#fff"}:{})}} onClick={()=>setSource("자사")}>🏭 자사 제품</div>
+        <div style={{...SI.chip,...(source==="타사"?{background:"#7c3aed",borderColor:"#8b5cf6",color:"#fff"}:{})}} onClick={()=>setSource("타사")}>📦 타사 매입</div>
+      </div>
+    </MFR>
+
+    {/* 가격 입력 */}
+    <MFR label={source==="자사"?"💰 자사 제품 가격":"💰 타사 매입 가격"}>
+      <div style={{background:"#0b0f1a",borderRadius:8,padding:"10px 12px",border:"1px solid #1e293b"}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))",gap:8}}>
+          {priceFields.map(f=>(
+            <div key={f.key}>
+              <div style={{fontSize:10,color:"#64748b",marginBottom:3}}>{f.label}</div>
+              <input type="number" style={{...GS.inp,padding:"5px 8px",fontSize:12}} value={prices[f.key]||""} onChange={e=>setP(f.key,e.target.value)} placeholder="0"/>
+            </div>
+          ))}
+        </div>
+        {source==="자사"&&prices.cost&&prices.retailPrice&&(
+          <div style={{marginTop:8,fontSize:11,color:"#64748b",borderTop:"1px solid #1e293b",paddingTop:6}}>
+            마진율: <span style={{color:"#10b981",fontWeight:700}}>{Math.round((1-Number(prices.cost)/Number(prices.retailPrice))*100)}%</span>
+            <span style={{marginLeft:12}}>마진액: <span style={{color:"#f59e0b",fontWeight:700}}>{won(Number(prices.retailPrice)-Number(prices.cost))}</span></span>
+          </div>
+        )}
+        {source==="타사"&&prices.purchasePrice&&prices.sellPrice&&(
+          <div style={{marginTop:8,fontSize:11,color:"#64748b",borderTop:"1px solid #1e293b",paddingTop:6}}>
+            마진율: <span style={{color:"#10b981",fontWeight:700}}>{Math.round((1-Number(prices.purchasePrice)/Number(prices.sellPrice))*100)}%</span>
+            <span style={{marginLeft:12}}>마진액: <span style={{color:"#f59e0b",fontWeight:700}}>{won(Number(prices.sellPrice)-Number(prices.purchasePrice))}</span></span>
+          </div>
+        )}
+      </div>
+    </MFR>
+
     <MFR label="메모"><input style={GS.inp} value={memo} onChange={e=>setMemo(e.target.value)}/></MFR>
-    <div style={GS.mBtns}><SBtn onClick={()=>{if(!name.trim())return;onSave({name,category:cat,stock:Number(stock),grip,color,memo});}} color="#10b981" full>등록</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
+    <div style={GS.mBtns}><SBtn onClick={()=>{if(!name.trim())return;onSave({name,category:cat,stock:Number(stock),grip,color,memo,source,prices});}} color="#10b981" full>{isEdit?"✅ 수정 완료":"등록"}</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
   </Modal>;
 }
 function AgencyModal({onClose,onSave}){
