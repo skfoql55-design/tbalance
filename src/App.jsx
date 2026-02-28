@@ -1426,21 +1426,21 @@ function InventoryPage({db}){
   // ── 구글시트 템플릿 다운로드 ──
   const downloadUniTemplate = () => {
     exportCSV("티밸런스_유니폼재고_템플릿.csv",
-      ["유니폼명","연도","2XS","XS","S","M","L","XL","2XL","3XL","4XL"],
+      ["유니폼명","연도","제품구분","원가","대리점가","탁구장가","인터넷최저가","소비자가","매입가","판매가","인터넷판매가","지인가","2XS","XS","S","M","L","XL","2XL","3XL","4XL"],
       [
-        ["y25-01_스카이웨이브(블루)","2025","0","0","5","10","8","5","3","1","0"],
-        ["y25-02_그라비티(레드&블루)","2025","0","0","3","7","6","4","2","0","0"],
+        ["y25-01_스카이웨이브(블루)","2025","자사","25000","32000","35000","38000","45000","","","","","0","0","5","10","8","5","3","1","0"],
+        ["y25-02_그라비티(레드&블루)","2025","타사","","","","","","30000","42000","39000","35000","0","0","3","7","6","4","2","0","0"],
       ]
     );
     toast_("유니폼 템플릿 다운로드!");
   };
   const downloadEquipTemplate = () => {
     exportCSV("티밸런스_용품재고_템플릿.csv",
-      ["카테고리","제품명","색상/규격","그립","재고수량","메모"],
+      ["카테고리","제품명","색상/규격","그립","재고수량","제품구분","원가","대리점가","탁구장가","인터넷최저가","소비자가","매입가","판매가","인터넷판매가","지인가","메모"],
       [
-        ["라켓","티바 샘소노프 올라운드","기본","FL","5",""],
-        ["러버","테너지05","레드","","10",""],
-        ["공","니타쿠 3스타","흰색","","24","1박스=24개"],
+        ["라켓","티바 샘소노프 올라운드","기본","FL","5","타사","","","","","","85000","120000","110000","100000",""],
+        ["러버","테너지05","레드","","10","타사","","","","","","35000","48000","45000","40000",""],
+        ["공","니타쿠 3스타","흰색","","24","자사","8000","12000","14000","13000","15000","","","","","1박스=24개"],
       ]
     );
     toast_("용품 템플릿 다운로드!");
@@ -1589,8 +1589,52 @@ function InventoryPage({db}){
       {ioMod&&<IOModal modal={ioMod} agencies={agencies} onClose={()=>setIO(null)} onSave={d=>{doIO(d);setIO(null);}}/>}
       {importMod&&<CSVImportModal modal={importMod} uniforms={uniforms} equips={equips}
         onClose={()=>setImportMod(null)}
-        onSaveUniforms={async(arr)=>{ await su([...arr,...uniforms]); toast_(`유니폼 ${arr.length}종 가져오기 완료!`); setImportMod(null); }}
-        onSaveEquips={async(arr)=>{ await se([...arr,...equips]); toast_(`용품 ${arr.length}종 가져오기 완료!`); setImportMod(null); }}
+        onSaveUniforms={async(arr,mode)=>{
+          if(mode==="merge"){
+            // 스마트 병합: 같은 이름 → 업데이트(이미지 보존), 새 이름 → 추가
+            let merged = [...uniforms];
+            let updCnt=0, addCnt=0;
+            for(const item of arr){
+              const idx = merged.findIndex(u=>u.name===item.name);
+              if(idx>=0){
+                // 기존 항목 업데이트 (이미지, id 보존)
+                merged[idx] = {...merged[idx], ...item, id:merged[idx].id, imgSrc:merged[idx].imgSrc||item.imgSrc};
+                updCnt++;
+              } else {
+                merged = [item,...merged];
+                addCnt++;
+              }
+            }
+            await su(merged);
+            toast_(`✅ 업데이트 ${updCnt}건, 신규 추가 ${addCnt}건 완료!`);
+          } else {
+            await su([...arr,...uniforms]);
+            toast_(`유니폼 ${arr.length}종 추가 완료!`);
+          }
+          setImportMod(null);
+        }}
+        onSaveEquips={async(arr,mode)=>{
+          if(mode==="merge"){
+            let merged = [...equips];
+            let updCnt=0, addCnt=0;
+            for(const item of arr){
+              const idx = merged.findIndex(e=>e.name===item.name);
+              if(idx>=0){
+                merged[idx] = {...merged[idx], ...item, id:merged[idx].id};
+                updCnt++;
+              } else {
+                merged = [item,...merged];
+                addCnt++;
+              }
+            }
+            await se(merged);
+            toast_(`✅ 업데이트 ${updCnt}건, 신규 추가 ${addCnt}건 완료!`);
+          } else {
+            await se([...arr,...equips]);
+            toast_(`용품 ${arr.length}종 추가 완료!`);
+          }
+          setImportMod(null);
+        }}
       />}
       {imgConfirm&&<Modal title="🖼 이미지 교체 확인" onClose={()=>setImgConfirm(null)}>
         <div style={{textAlign:"center",marginBottom:16}}>
@@ -2066,34 +2110,68 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
   const [type, setType] = useState(isUniform ? "uniform" : "equip");
 
   // 유니폼 파싱
+  const PRICE_KEYS = ["제품구분","원가","대리점가","탁구장가","인터넷최저가","소비자가","매입가","판매가","인터넷판매가","지인가"];
+  const NON_SIZE_KEYS = ["유니폼명","이름","name","연도","year",...PRICE_KEYS];
+
   const parsedUniforms = useMemo(() => {
     if(type !== "uniform") return [];
     return rows.map(row => {
       const name = row["유니폼명"] || row["이름"] || row["name"] || "";
       const year = row["연도"] || row["year"] || String(new Date().getFullYear());
+      const source = (row["제품구분"]||"").trim() === "타사" ? "타사" : "자사";
+      const prices = {};
+      if(source==="자사"){
+        if(row["원가"]) prices.cost=row["원가"];
+        if(row["대리점가"]) prices.agencyPrice=row["대리점가"];
+        if(row["탁구장가"]) prices.shopPrice=row["탁구장가"];
+        if(row["인터넷최저가"]) prices.onlineMinPrice=row["인터넷최저가"];
+        if(row["소비자가"]) prices.retailPrice=row["소비자가"];
+      } else {
+        if(row["매입가"]) prices.purchasePrice=row["매입가"];
+        if(row["판매가"]) prices.sellPrice=row["판매가"];
+        if(row["인터넷판매가"]) prices.onlineSellPrice=row["인터넷판매가"];
+        if(row["지인가"]) prices.friendPrice=row["지인가"];
+      }
       // 나머지 컬럼은 사이즈로 처리
-      const sizeKeys = Object.keys(row).filter(k => !["유니폼명","이름","name","연도","year"].includes(k));
+      const sizeKeys = Object.keys(row).filter(k => !NON_SIZE_KEYS.includes(k));
       const sizes = {};
       sizeKeys.forEach(sz => {
         const v = Number(row[sz]);
         if(!isNaN(v) && v > 0) sizes[sz] = v;
       });
-      return { id: gid(), name, year, imgSrc: null, sizes };
+      return { id: gid(), name, year, imgSrc: null, sizes, source, prices };
     }).filter(u => u.name);
   }, [rows, type]);
 
   // 용품 파싱
   const parsedEquips = useMemo(() => {
     if(type !== "equip") return [];
-    return rows.map(row => ({
-      id: gid(),
-      category: row["카테고리"] || "기타용품",
-      name: row["제품명"] || row["이름"] || row["name"] || "",
-      color: row["색상/규격"] || row["색상"] || "",
-      grip: row["그립"] || "",
-      stock: Number(row["재고수량"] || row["재고"] || row["stock"] || 0),
-      memo: row["메모"] || "",
-    })).filter(e => e.name);
+    return rows.map(row => {
+      const source = (row["제품구분"]||"").trim() === "자사" ? "자사" : "타사";
+      const prices = {};
+      if(source==="자사"){
+        if(row["원가"]) prices.cost=row["원가"];
+        if(row["대리점가"]) prices.agencyPrice=row["대리점가"];
+        if(row["탁구장가"]) prices.shopPrice=row["탁구장가"];
+        if(row["인터넷최저가"]) prices.onlineMinPrice=row["인터넷최저가"];
+        if(row["소비자가"]) prices.retailPrice=row["소비자가"];
+      } else {
+        if(row["매입가"]) prices.purchasePrice=row["매입가"];
+        if(row["판매가"]) prices.sellPrice=row["판매가"];
+        if(row["인터넷판매가"]) prices.onlineSellPrice=row["인터넷판매가"];
+        if(row["지인가"]) prices.friendPrice=row["지인가"];
+      }
+      return {
+        id: gid(),
+        category: row["카테고리"] || "기타용품",
+        name: row["제품명"] || row["이름"] || row["name"] || "",
+        color: row["색상/규격"] || row["색상"] || "",
+        grip: row["그립"] || "",
+        stock: Number(row["재고수량"] || row["재고"] || row["stock"] || 0),
+        memo: row["메모"] || "",
+        source, prices,
+      };
+    }).filter(e => e.name);
   }, [rows, type]);
 
   const preview = type === "uniform" ? parsedUniforms : parsedEquips;
@@ -2116,10 +2194,11 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
         </div>
       </MFR>
 
-      {/* 중복 경고 */}
+      {/* 중복 경고 & 처리 방식 */}
       {dups.length > 0 && (
-        <div style={{background:"rgba(245,158,11,0.1)",border:"1px solid #f59e0b",borderRadius:8,padding:"8px 12px",marginBottom:10,fontSize:12,color:"#fcd34d"}}>
-          ⚠️ 이미 등록된 항목 {dups.length}개: {dups.map(d=>d.name).join(", ")} — 중복 추가됩니다
+        <div style={{background:"rgba(245,158,11,0.1)",border:"1px solid #f59e0b",borderRadius:8,padding:"10px 14px",marginBottom:10}}>
+          <div style={{fontSize:12,color:"#fcd34d",marginBottom:6}}>⚠️ 이미 등록된 항목 {dups.length}개: {dups.slice(0,5).map(d=>d.name).join(", ")}{dups.length>5?" ...":""}</div>
+          <div style={{fontSize:11,color:"#94a3b8"}}>아래에서 처리 방식을 선택하세요</div>
         </div>
       )}
 
@@ -2130,16 +2209,26 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
             <div style={{color:"#ef4444",fontSize:12,padding:8}}>⚠️ 파싱된 데이터가 없습니다. 템플릿 형식을 확인해주세요.</div>
           )}
           {type === "uniform" && parsedUniforms.map((u,i) => (
-            <div key={i} style={{background:"#1e293b",borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div>
-                <div style={{fontWeight:600,fontSize:13}}>{u.name}</div>
-                <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{u.year}년도</div>
-              </div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:4,justifyContent:"flex-end",maxWidth:"60%"}}>
-                {Object.entries(u.sizes).map(([sz,v])=>(
-                  <span key={sz} style={{background:"#0b0f1a",border:"1px solid #334155",borderRadius:4,padding:"1px 6px",fontSize:10,color:"#94a3b8"}}>{sz}:{v}</span>
-                ))}
-                {Object.keys(u.sizes).length === 0 && <span style={{fontSize:11,color:"#475569"}}>수량 없음</span>}
+            <div key={i} style={{background:"#1e293b",borderRadius:8,padding:"8px 12px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13}}>{u.name}
+                    <span style={{fontSize:9,marginLeft:6,padding:"1px 5px",borderRadius:3,fontWeight:600,
+                      background:u.source==="자사"?"rgba(59,130,246,0.15)":"rgba(139,92,246,0.15)",
+                      color:u.source==="자사"?"#93c5fd":"#c4b5fd"
+                    }}>{u.source}</span>
+                  </div>
+                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{u.year}년도
+                    {u.source==="자사"&&u.prices.retailPrice&&<span style={{marginLeft:8}}>소비자가 <b style={{color:"#f59e0b"}}>{won(u.prices.retailPrice)}</b></span>}
+                    {u.source==="타사"&&u.prices.sellPrice&&<span style={{marginLeft:8}}>판매가 <b style={{color:"#f59e0b"}}>{won(u.prices.sellPrice)}</b></span>}
+                  </div>
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:4,justifyContent:"flex-end",maxWidth:"50%"}}>
+                  {Object.entries(u.sizes).map(([sz,v])=>(
+                    <span key={sz} style={{background:"#0b0f1a",border:"1px solid #334155",borderRadius:4,padding:"1px 6px",fontSize:10,color:"#94a3b8"}}>{sz}:{v}</span>
+                  ))}
+                  {Object.keys(u.sizes).length === 0 && <span style={{fontSize:11,color:"#475569"}}>수량 없음</span>}
+                </div>
               </div>
             </div>
           ))}
@@ -2148,7 +2237,13 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
               <div>
                 <span style={{background:"#374151",color:"#94a3b8",padding:"1px 6px",borderRadius:4,fontSize:10,marginRight:6}}>{e.category}</span>
                 <span style={{fontWeight:600,fontSize:13}}>{e.name}</span>
+                <span style={{fontSize:9,marginLeft:6,padding:"1px 5px",borderRadius:3,fontWeight:600,
+                  background:e.source==="자사"?"rgba(59,130,246,0.15)":"rgba(139,92,246,0.15)",
+                  color:e.source==="자사"?"#93c5fd":"#c4b5fd"
+                }}>{e.source}</span>
                 {e.color && <span style={{fontSize:11,color:"#64748b",marginLeft:6}}>{e.color}</span>}
+                {e.source==="자사"&&e.prices.retailPrice&&<span style={{fontSize:10,marginLeft:6,color:"#f59e0b"}}>소비자가 {won(e.prices.retailPrice)}</span>}
+                {e.source==="타사"&&e.prices.sellPrice&&<span style={{fontSize:10,marginLeft:6,color:"#f59e0b"}}>판매가 {won(e.prices.sellPrice)}</span>}
               </div>
               <span style={{fontWeight:700,color:e.stock>0?"#10b981":"#ef4444",fontSize:13}}>{e.stock}개</span>
             </div>
@@ -2157,9 +2252,14 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
       </MFR>
 
       <div style={GS.mBtns}>
-        <SBtn onClick={()=>{ if(type==="uniform") onSaveUniforms(parsedUniforms); else onSaveEquips(parsedEquips); }}
+        <SBtn onClick={()=>{ if(type==="uniform") onSaveUniforms(parsedUniforms,"merge"); else onSaveEquips(parsedEquips,"merge"); }}
           color="#3b82f6" full disabled={preview.length===0}>
-          ✅ {preview.length}개 가져오기
+          🔄 스마트 병합 ({preview.length}개)
+        </SBtn>
+        {dups.length>0&&<div style={{fontSize:10,color:"#64748b",textAlign:"center",margin:"-4px 0"}}>같은 이름 → 업데이트 (이미지 보존) / 새 이름 → 추가</div>}
+        <SBtn onClick={()=>{ if(type==="uniform") onSaveUniforms(parsedUniforms,"add"); else onSaveEquips(parsedEquips,"add"); }}
+          color="#374151" full disabled={preview.length===0}>
+          ➕ 전부 새로 추가 (중복 허용)
         </SBtn>
         <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
       </div>
