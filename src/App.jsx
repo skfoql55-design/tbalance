@@ -1354,17 +1354,29 @@ function InventoryPage({db}){
       toast_(`❌ 매칭 실패 ${notFound.length}건: ${notFound.slice(0,3).join(", ")}${notFound.length>3?" ...":""}`, false);
     }
 
-    // 바로 업로드 가능한 것들 처리
+    // 바로 업로드 가능한 것들 처리 (배치 방식)
     if(readyToUpload.length > 0){
       const total = readyToUpload.length;
       setImgProgress({ done:0, total, current:"" });
+      const imgMap = {}; // { uniformId: url }
       for(let i=0; i<readyToUpload.length; i++){
         const {uniform, file} = readyToUpload[i];
         setImgProgress({ done:i, total, current:uniform.name });
-        await applyImageToUniform(uniform, file);
+        try {
+          const url = await uploadImage(file, `uniforms/${gid()}_${file.name}`);
+          imgMap[uniform.id] = url;
+        } catch(e) {
+          console.error(e);
+          toast_(`"${uniform.name}" 업로드 실패`, false);
+        }
+      }
+      // 한번에 모아서 저장
+      if(Object.keys(imgMap).length > 0){
+        const updated = uniforms.map(u => imgMap[u.id] ? {...u, imgSrc: imgMap[u.id]} : u);
+        await su(updated);
       }
       setImgProgress(null);
-      toast_(`✅ ${total}건 이미지 등록 완료!`);
+      toast_(`✅ ${Object.keys(imgMap).length}건 이미지 등록 완료!`);
     }
 
     // 중복 있는 것들은 하나씩 확인
