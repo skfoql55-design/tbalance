@@ -128,6 +128,14 @@ if (!document.getElementById("tb-mobile-css")) {
     @media (min-width: 768px) {
       .tb-hide-desktop { display: none !important; }
     }
+    @keyframes tibot-bounce { 0%,60%,100%{transform:translateY(0);opacity:.4} 30%{transform:translateY(-6px);opacity:1} }
+    @keyframes tibot-fadein { from{opacity:0;transform:translateY(10px) scale(.97)} to{opacity:1;transform:translateY(0) scale(1)} }
+    @keyframes tibot-msgslide { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+    @keyframes tibot-pulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    @keyframes tibot-fab-pop { 0%{transform:scale(.8);opacity:0} 100%{transform:scale(1);opacity:1} }
+    .tibot-window { animation: tibot-fadein .22s cubic-bezier(.34,1.56,.64,1); }
+    .tibot-msg    { animation: tibot-msgslide .2s ease; }
+    .tibot-fab    { animation: tibot-fab-pop .3s cubic-bezier(.34,1.56,.64,1); }
   `;
   document.head.appendChild(s);
 }
@@ -366,6 +374,7 @@ function MainApp({ user, onLogout }) {
   const [sideOpen, setSide]   = useState(true);
   const [drawerOpen, setDrw]  = useState(false);
   const [toast, setToast]     = useState(null);
+  const [botOpen, setBotOpen] = useState(false);
   const isMobile              = useIsMobile();
 
   // 페이지 변경 시 URL 해시 업데이트
@@ -595,6 +604,9 @@ function MainApp({ user, onLogout }) {
         padding:"10px 26px", borderRadius:10, color:"white", fontSize:13, fontWeight:500,
         zIndex:999, boxShadow:"0 4px 24px rgba(0,0,0,0.5)", whiteSpace:"nowrap",
         background:toast.ok?"#064e3b":"#7f1d1d" }}>{toast.msg}</div>}
+
+      {/* ── 티봇 AI 챗봇 ── */}
+      <TiBotFloat open={botOpen} onToggle={()=>setBotOpen(p=>!p)} isMobile={isMobile}/>
     </div>
   );
 }
@@ -3741,5 +3753,288 @@ function AutoSaleModal({ order, onClose, onSave, onSkip }) {
         <SBtn onClick={onSkip} color="#374151" full>나중에 등록</SBtn>
       </div>
     </Modal>
+  );
+}
+
+/* ═══════════════════════════════════════════════════════
+   🏓 티봇(TiBot) — 플로팅 AI 사용가이드 챗봇
+═══════════════════════════════════════════════════════ */
+const TIBOT_SYSTEM = `당신은 "티봇(TiBot)" — 티밸런스 관리 시스템 전문 도우미입니다.
+티밸런스는 탁구 단체복 주문·재고·매출·거래처를 통합 관리하는 웹앱입니다.
+
+## 메뉴 및 기능
+
+🚚 단체복 주문 현황: 상담중→시안발송→주문확정→발주완료→제작중→입고완료 단계 관리. 발주일 입력 시 납기일 자동 +14일. 입고완료 시 매출 자동 등록 팝업. D-day/엑셀 내보내기.
+
+📅 납기일 캘린더: 월별 그리드, 🔴납기초과 🟡3일이내 🔵진행중 🟢완료 도트 표시. 날짜 클릭 시 상세.
+
+🎨 등판 시안 제작: 목업 이미지 업로드+드래그&드롭, 텍스트/로고 레이어, 폰트 커스텀 업로드, PNG 다운로드/클립보드 복사, 거래처별 저장.
+
+📦 재고 관리: 유니폼(년도 필터, 재고없는순/품절사이즈순, 바뷰) + 용품(카테고리별) + 입출고이력 + 대리점관리. 구글시트 CSV 드래그&드롭 임포트. Firebase Storage 이미지 저장. 유니폼 등록 시 판매단가/매입단가 입력 가능(매출 자동계산에 사용).
+
+📊 매출 관리: 대시보드(월별 차트+인기 유니폼 랭킹 연간/월간), 유니폼/용품 매출 탭, 미수금 탭, 엑셀 내보내기. 단품판매 시 유니폼 선택→사이즈 선택→수량 입력하면 매출액/원가 자동계산.
+
+📋 주문·명단 관리: 목록/칸반 뷰 전환, 주문서 등록, 상의/하의 별도 명단(성명·등이름·등번호·사이즈·수량), A4 가로 인쇄.
+
+🏢 거래처 관리: 카드뷰(유형/지역 필터), 단체문자 발송, CSV 임포트/엑셀 내보내기, 거래처 템플릿.
+
+💳 입금 확인: 미수금/입금완료 필터, 미수금 문자 자동작성(SMS 앱 연동), 엑셀 내보내기.
+
+🧾 세금계산서: 거래처 자동완성, 품목 추가, 공급가액+세액(10%) 자동계산, PDF 인쇄.
+
+💬 메시지 템플릿: 카테고리별 관리, {거래처}{날짜}{금액} 변수 치환, SMS 발송.
+
+🔔 알림 벨: 납기초과·3일이내·미수금 실시간 알림, 클릭 시 해당 페이지 이동.
+
+## 로그인
+카카오 로그인 권장. 전화번호 로그인 가능(데모 인증번호: 1234).
+
+## 공통
+Firebase Firestore 영구저장. URL 해시로 새로고침 후 탭 유지(#inventory 등). 모바일 하단탭바. 다크테마.
+
+## 답변 스타일
+친근하고 실용적으로. 기능 위치는 메뉴명(이모지 포함)으로. 단계별 설명 시 번호 목록. 간결하게 핵심만.`;
+
+const TIBOT_QUICK = [
+  { icon:"🚚", text:"단체복 주문 등록 방법" },
+  { icon:"📦", text:"재고 CSV 가져오는 방법" },
+  { icon:"🎨", text:"등판 시안 만드는 방법" },
+  { icon:"💳", text:"미수금 문자 보내는 방법" },
+  { icon:"📊", text:"단품 매출 자동계산 방법" },
+  { icon:"🧾", text:"세금계산서 발행 방법" },
+];
+
+function TiBotFloat({ open, onToggle, isMobile }) {
+  const botBottom = isMobile ? 76 : 24;
+  const winBottom = isMobile ? 76 : 90;
+  return (
+    <>
+      {open && (
+        <div className="tibot-window" style={{
+          position:"fixed",
+          bottom: winBottom,
+          right: isMobile ? 0 : 24,
+          width: isMobile ? "100vw" : 380,
+          height: isMobile ? `calc(100vh - ${winBottom}px)` : 560,
+          background:"#111827",
+          border: isMobile ? "none" : "1px solid #1e293b",
+          borderRadius: isMobile ? "20px 20px 0 0" : 18,
+          display:"flex", flexDirection:"column",
+          overflow:"hidden", zIndex:1000,
+          boxShadow:"0 24px 64px rgba(0,0,0,0.8), 0 0 0 1px rgba(59,130,246,0.1)",
+        }}>
+          <TiBotWindow onClose={onToggle}/>
+        </div>
+      )}
+      <button className="tibot-fab" onClick={onToggle} style={{
+        position:"fixed", bottom: botBottom, right: 24,
+        width:52, height:52, borderRadius:"50%",
+        background: open ? "linear-gradient(135deg,#374151,#1e293b)" : "linear-gradient(135deg,#2563eb,#1d4ed8)",
+        border:"none", cursor:"pointer",
+        fontSize: open ? 20 : 26,
+        display:"flex", alignItems:"center", justifyContent:"center",
+        zIndex:1001,
+        boxShadow: open ? "0 4px 16px rgba(0,0,0,0.4)" : "0 6px 24px rgba(37,99,235,0.55)",
+        transition:"all 0.2s ease", color:"white",
+      }} title={open ? "챗봇 닫기" : "티봇 — 사용가이드 AI"}>
+        {open ? "✕" : "🏓"}
+      </button>
+      {!open && <TiBotTooltip />}
+    </>
+  );
+}
+
+function TiBotTooltip() {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => { const t = setTimeout(() => setVisible(false), 4000); return () => clearTimeout(t); }, []);
+  if (!visible) return null;
+  return (
+    <div style={{
+      position:"fixed", bottom:88, right:82,
+      background:"#1e293b", border:"1px solid #3b82f6",
+      borderRadius:10, padding:"8px 12px",
+      fontSize:12, color:"#93c5fd", fontWeight:500,
+      zIndex:1001, whiteSpace:"nowrap",
+      boxShadow:"0 4px 16px rgba(0,0,0,0.4)", pointerEvents:"none",
+      animation:"tibot-fadein 0.3s ease",
+    }}>
+      🏓 사용법이 궁금하면 물어보세요!
+      <div style={{
+        position:"absolute", bottom:-6, right:16,
+        width:10, height:10, background:"#1e293b",
+        border:"1px solid #3b82f6", borderTop:"none", borderLeft:"none",
+        transform:"rotate(45deg)",
+      }}/>
+    </div>
+  );
+}
+
+function TiBotWindow({ onClose }) {
+  const [messages, setMessages] = useState([{
+    role:"assistant",
+    content:"안녕하세요! **티봇(TiBot)** 🏓입니다.\n티밸런스 사용법이라면 뭐든지 물어보세요!",
+  }]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [showQuick, setShowQuick] = useState(true);
+  const bottomRef = useRef(null);
+  const inputRef  = useRef(null);
+
+  useEffect(() => { bottomRef.current?.scrollIntoView({ behavior:"smooth" }); }, [messages, loading]);
+
+  const send = useCallback(async (text) => {
+    const t = (text || input).trim();
+    if (!t || loading) return;
+    setInput(""); setShowQuick(false);
+    const next = [...messages, { role:"user", content:t }];
+    setMessages(next);
+    setLoading(true);
+    try {
+      const res = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json" },
+        body: JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:1000,
+          system: TIBOT_SYSTEM,
+          messages: next.map(m=>({ role:m.role, content:m.content })),
+        }),
+      });
+      const data = await res.json();
+      const reply = data.content?.[0]?.text || "응답을 받지 못했습니다.";
+      setMessages(p => [...p, { role:"assistant", content:reply }]);
+    } catch {
+      setMessages(p => [...p, { role:"assistant", content:"⚠️ 오류가 발생했습니다. 잠시 후 다시 시도해주세요." }]);
+    } finally {
+      setLoading(false);
+      setTimeout(() => inputRef.current?.focus(), 80);
+    }
+  }, [input, messages, loading]);
+
+  const handleKey = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } };
+  const reset = () => {
+    setMessages([{ role:"assistant", content:"안녕하세요! **티봇(TiBot)** 🏓입니다.\n티밸런스 사용법이라면 뭐든지 물어보세요!" }]);
+    setShowQuick(true); setInput("");
+  };
+
+  return (
+    <>
+      <div style={{
+        display:"flex", alignItems:"center", justifyContent:"space-between",
+        padding:"13px 16px", borderBottom:"1px solid #1e293b",
+        background:"linear-gradient(135deg,#0d1117,#111827)", flexShrink:0,
+      }}>
+        <div style={{ display:"flex", alignItems:"center", gap:10 }}>
+          <div style={{ width:34, height:34, borderRadius:10, background:"linear-gradient(135deg,#1d4ed8,#2563eb)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:18, boxShadow:"0 3px 10px rgba(37,99,235,0.45)" }}>🏓</div>
+          <div>
+            <div style={{ fontSize:13, fontWeight:700, color:"#f1f5f9", letterSpacing:"-0.3px" }}>티봇 TiBot</div>
+            <div style={{ display:"flex", alignItems:"center", gap:4, marginTop:1 }}>
+              <span style={{ width:6, height:6, borderRadius:"50%", background:"#10b981", boxShadow:"0 0 5px #10b981", animation:"tibot-pulse 2s infinite", display:"block" }}/>
+              <span style={{ fontSize:10, color:"#64748b" }}>사용가이드 AI</span>
+            </div>
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:5 }}>
+          <button onClick={reset} style={{ background:"rgba(255,255,255,0.05)", border:"1px solid #334155", color:"#64748b", borderRadius:7, padding:"4px 9px", cursor:"pointer", fontSize:11 }}>↺</button>
+          <button onClick={onClose} style={{ background:"rgba(255,255,255,0.05)", border:"1px solid #334155", color:"#64748b", borderRadius:7, padding:"4px 9px", cursor:"pointer", fontSize:16, lineHeight:1 }}>✕</button>
+        </div>
+      </div>
+
+      <div style={{ flex:1, overflowY:"auto", padding:"14px 14px 8px", display:"flex", flexDirection:"column", gap:10, scrollbarWidth:"thin", scrollbarColor:"#1e293b transparent" }}>
+        {messages.map((m, i) => <TiBotBubble key={i} msg={m} />)}
+        {loading && (
+          <div style={{ display:"flex", gap:8, alignItems:"flex-start" }}>
+            <TiBotAvatar />
+            <div style={{ background:"#1e293b", borderRadius:"4px 12px 12px 12px", border:"1px solid #334155", padding:"11px 14px", display:"flex", gap:4, alignItems:"center" }}>
+              {[0,1,2].map(j => <span key={j} style={{ width:6, height:6, borderRadius:"50%", background:"#3b82f6", display:"block", animation:`tibot-bounce 1.2s ${j*0.2}s infinite` }}/>)}
+            </div>
+          </div>
+        )}
+        {showQuick && !loading && (
+          <div style={{ marginTop:4 }}>
+            <div style={{ fontSize:10, color:"#4b5563", textAlign:"center", marginBottom:7 }}>자주 묻는 질문</div>
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:5 }}>
+              {TIBOT_QUICK.map((q,i) => (
+                <button key={i} onClick={()=>send(q.text)} style={{
+                  background:"rgba(30,41,59,0.8)", border:"1px solid #334155", borderRadius:9,
+                  padding:"8px 9px", color:"#94a3b8", fontSize:10, cursor:"pointer",
+                  textAlign:"left", lineHeight:1.4, transition:"all 0.15s",
+                  display:"flex", alignItems:"flex-start", gap:5,
+                }}
+                  onMouseEnter={e=>{e.currentTarget.style.background="rgba(59,130,246,0.12)";e.currentTarget.style.borderColor="#3b82f6";e.currentTarget.style.color="#93c5fd";}}
+                  onMouseLeave={e=>{e.currentTarget.style.background="rgba(30,41,59,0.8)";e.currentTarget.style.borderColor="#334155";e.currentTarget.style.color="#94a3b8";}}
+                >
+                  <span style={{ fontSize:12, flexShrink:0 }}>{q.icon}</span>
+                  <span>{q.text}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <div ref={bottomRef}/>
+      </div>
+
+      <div style={{ padding:"10px 12px 14px", borderTop:"1px solid #1e293b", background:"#0d1117", flexShrink:0 }}>
+        <div style={{ display:"flex", gap:7, alignItems:"flex-end", background:"#1e293b", border:"1px solid #334155", borderRadius:12, padding:"7px 7px 7px 12px" }}>
+          <textarea ref={inputRef} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={handleKey}
+            placeholder="사용법을 물어보세요... (Enter 전송)" disabled={loading} rows={1}
+            style={{ flex:1, background:"transparent", border:"none", color:"#f1f5f9", fontSize:13, outline:"none", resize:"none", lineHeight:1.5, maxHeight:80, overflowY:"auto", fontFamily:"inherit" }}
+            onInput={e=>{ e.target.style.height="auto"; e.target.style.height=Math.min(e.target.scrollHeight,80)+"px"; }}
+          />
+          <button onClick={()=>send()} disabled={loading || !input.trim()} style={{
+            width:32, height:32, borderRadius:9, border:"none",
+            background: input.trim()&&!loading ? "linear-gradient(135deg,#2563eb,#1d4ed8)" : "#374151",
+            color:"white", cursor:input.trim()&&!loading?"pointer":"default",
+            fontSize:14, display:"flex", alignItems:"center", justifyContent:"center",
+            flexShrink:0, transition:"all 0.15s",
+            boxShadow: input.trim()&&!loading ? "0 3px 10px rgba(37,99,235,0.45)" : "none",
+          }}>{loading?"⏳":"↑"}</button>
+        </div>
+        <div style={{ fontSize:10, color:"#374151", textAlign:"center", marginTop:6 }}>티밸런스 AI 가이드 · 답변은 참고용입니다</div>
+      </div>
+    </>
+  );
+}
+
+function TiBotAvatar() {
+  return (
+    <div style={{ width:28, height:28, borderRadius:8, flexShrink:0, background:"linear-gradient(135deg,#1d4ed8,#2563eb)", display:"flex", alignItems:"center", justifyContent:"center", fontSize:14, boxShadow:"0 2px 8px rgba(37,99,235,0.35)" }}>🏓</div>
+  );
+}
+
+function TiBotBubble({ msg }) {
+  const isBot = msg.role === "assistant";
+  const parseText = (text) => {
+    const parts = [];
+    text.split("\n").forEach((line, li) => {
+      if (li > 0) parts.push(<br key={`br${li}`}/>);
+      line.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).forEach((seg, si) => {
+        if (seg.startsWith("**") && seg.endsWith("**"))
+          parts.push(<strong key={`${li}${si}`} style={{ color:"#f1f5f9", fontWeight:700 }}>{seg.slice(2,-2)}</strong>);
+        else if (seg.startsWith("`") && seg.endsWith("`"))
+          parts.push(<code key={`${li}${si}`} style={{ background:"#0b0f1a", borderRadius:4, padding:"1px 4px", fontSize:11, color:"#93c5fd", fontFamily:"monospace" }}>{seg.slice(1,-1)}</code>);
+        else parts.push(seg);
+      });
+    });
+    return parts;
+  };
+  return (
+    <div className="tibot-msg" style={{ display:"flex", flexDirection:isBot?"row":"row-reverse", gap:7, alignItems:"flex-start" }}>
+      {isBot && <TiBotAvatar />}
+      <div style={{
+        maxWidth:"80%",
+        background: isBot ? "#1e293b" : "linear-gradient(135deg,#2563eb,#1d4ed8)",
+        borderRadius: isBot ? "4px 12px 12px 12px" : "12px 4px 12px 12px",
+        border: isBot ? "1px solid #334155" : "none",
+        padding:"10px 13px", fontSize:12, color:isBot?"#cbd5e1":"white",
+        lineHeight:1.65,
+        boxShadow: isBot ? "none" : "0 3px 14px rgba(37,99,235,0.3)",
+      }}>
+        {parseText(msg.content)}
+      </div>
+      {!isBot && (
+        <div style={{ width:28, height:28, borderRadius:8, flexShrink:0, background:"#374151", border:"1px solid #4b5563", display:"flex", alignItems:"center", justifyContent:"center", fontSize:13 }}>👤</div>
+      )}
+    </div>
   );
 }
