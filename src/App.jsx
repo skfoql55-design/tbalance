@@ -1660,8 +1660,8 @@ function UniformListView({ uniforms, onEdit, onDel, onIO, onAdd }) {
             const low = Object.values(u.sizes||{}).some(v=>Number(v||0)>0&&Number(v||0)<=3);
             return (
               <div key={u.id} style={{background:"#111827",border:`1px solid ${tot===0?"#ef4444":low?"#f59e0b":"#1e293b"}`,borderRadius:10,overflow:"hidden"}}>
-                <div style={{height:110,background:"#0b0f1a",display:"flex",alignItems:"center",justifyContent:"center"}}>
-                  {u.imgSrc ? <img src={u.imgSrc} style={{height:"100%",width:"100%",objectFit:"cover"}} alt=""/> : <span style={{fontSize:36,color:"#1e293b"}}>👕</span>}
+                <div style={{height:140,background:"#0d1117",display:"flex",alignItems:"center",justifyContent:"center",overflow:"hidden"}}>
+                  {u.imgSrc ? <img src={u.imgSrc} style={{height:"100%",width:"100%",objectFit:"contain",padding:"8px"}} alt=""/> : <span style={{fontSize:36,color:"#1e293b"}}>👕</span>}
                 </div>
                 <div style={{padding:"10px 12px"}}>
                   <div style={{fontWeight:600,fontSize:13,marginBottom:2,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{u.name}</div>
