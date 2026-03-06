@@ -1679,6 +1679,8 @@ function UniformModal({onClose,onSave,initial}){
   const [year,setYear]=useState(initial?.year||String(new Date().getFullYear()));
   const [imgSrc,setImg]=useState(initial?.imgSrc||null);
   const [sizes,setSizes]=useState(initial?.sizes||{});
+  const [sellPrice,setSellPrice]=useState(initial?.sellPrice||"");
+  const [costPrice,setCostPrice]=useState(initial?.costPrice||"");
   const [cs,setCS]=useState("");
   const [uploading,setUploading]=useState(false);
   const imgRef=useRef();
@@ -1713,6 +1715,17 @@ function UniformModal({onClose,onSave,initial}){
         {uploading&&<div style={{fontSize:11,color:"#f59e0b",marginTop:4}}>☁️ Firebase Storage에 업로드 중...</div>}
       </MFR>
     </div>
+    {/* ── 단가 정보 ── */}
+    <div style={GS.fGrid}>
+      <MFR label="판매단가 (원)">
+        <input type="number" style={GS.inp} value={sellPrice} onChange={e=>setSellPrice(e.target.value)} placeholder="예) 45000"/>
+        <div style={{fontSize:10,color:"#64748b",marginTop:3}}>단품 매출 등록 시 자동계산</div>
+      </MFR>
+      <MFR label="매입단가 (원)">
+        <input type="number" style={GS.inp} value={costPrice} onChange={e=>setCostPrice(e.target.value)} placeholder="예) 28000"/>
+        <div style={{fontSize:10,color:"#64748b",marginTop:3}}>수입원가 자동계산</div>
+      </MFR>
+    </div>
     <MFR label="사이즈 선택">
       <div style={{display:"flex",flexWrap:"wrap",gap:4,marginBottom:6}}>{SIZES.map(sz=><div key={sz} style={{...SI.chip,...(sizes[sz]!==undefined?SI.chipA:{})}} onClick={()=>toggleSz(sz)}>{sz}</div>)}</div>
       <div style={{display:"flex",gap:5}}><input style={{...GS.inp,flex:1}} placeholder="직접입력" value={cs} onChange={e=>setCS(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addCustom()}/><SBtn onClick={addCustom} color="#374151">추가</SBtn></div>
@@ -1736,14 +1749,13 @@ function UniformModal({onClose,onSave,initial}){
       </MFR>
     )}
     <div style={GS.mBtns}>
-      <SBtn onClick={()=>{if(!name.trim()||uploading)return;onSave({name,year,imgSrc,sizes});}} color={isEdit?"#10b981":"#3b82f6"} full disabled={uploading}>
+      <SBtn onClick={()=>{if(!name.trim()||uploading)return;onSave({name,year,imgSrc,sizes,sellPrice:Number(sellPrice)||0,costPrice:Number(costPrice)||0});}} color={isEdit?"#10b981":"#3b82f6"} full disabled={uploading}>
         {uploading?"⏳ 이미지 업로드 중...":(isEdit?"✅ 수정 완료":"등록")}
       </SBtn>
       <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
     </div>
   </Modal>;
-}
-function EquipModal({onClose,onSave}){
+}function EquipModal({onClose,onSave}){
   const [name,setName]=useState(""); const [cat,setCat]=useState("라켓"); const [stock,setStock]=useState(0); const [grip,setGrip]=useState(""); const [color,setColor]=useState(""); const [memo,setMemo]=useState("");
   return <Modal title="용품 등록" onClose={onClose}>
     <MFR label="카테고리"><div style={GS.chips}>{EQUIP_CATS.map(c=><div key={c} style={{...SI.chip,...(cat===c?SI.chipA:{})}} onClick={()=>setCat(c)}>{c}</div>)}</div></MFR>
@@ -2209,43 +2221,86 @@ function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
     if(!iU||!initial?.itemName) return "";
     return uniforms.find(u=>u.name===initial.itemName)?.id||"";
   });
+
+  // ── 단품판매: 사이즈별 수량
   const [sizeQtys,setSizeQtys]=useState(initial?.sizeQtys||{});
+
+  // ── 단체복: 이전 방식 사이즈 멀티선택
+  const [bulkSizeQtys,setBulkSizeQtys]=useState(initial?.sizeQtys||{});
+
   const selUni=uniforms.find(u=>u.id===selUniId)||null;
-  const totalQty=Object.values(sizeQtys).reduce((a,v)=>a+v,0);
+  const isSingle=f.orderType==="단품판매";
+
+  // 단품: 사이즈 하나씩 선택
+  const [selSize,setSelSize]=useState(initial?.selSize||"");
+  const [selQty,setSelQty]=useState(initial?.selQty||1);
 
   const pickUni=(id)=>{
-    setSelUniId(id); setSizeQtys({});
+    setSelUniId(id);
+    setSizeQtys({}); setBulkSizeQtys({});
+    setSelSize(""); setSelQty(1);
     const u=uniforms.find(x=>x.id===id);
-    if(u){s("itemName",u.name);s("detail",u.name);}
-    else{s("itemName","");s("detail","");}
+    if(u){ s("itemName",u.name); s("detail",u.name); s("sales",""); s("cost",""); }
+    else { s("itemName",""); s("detail",""); s("sales",""); s("cost",""); }
   };
-  const setSzQ=(sz,val)=>{
+
+  // 단품판매: 사이즈·수량 변경 → 자동계산
+  const handleSingleChange=(sz,qty)=>{
+    const newSz = sz !== undefined ? sz : selSize;
+    const newQty = qty !== undefined ? Math.max(1, Number(qty)||1) : selQty;
+    const maxStk = Number(selUni?.sizes?.[newSz]||0);
+    const safeQty = Math.min(newQty, maxStk);
+
+    setSelSize(newSz);
+    setSelQty(safeQty);
+
+    if(selUni && newSz){
+      const sp = Number(selUni.sellPrice||0);
+      const cp = Number(selUni.costPrice||0);
+      if(sp>0) s("sales", sp * safeQty);
+      if(cp>0) s("cost",  cp * safeQty);
+      s("detail", `${selUni.name} ${newSz} ${safeQty}벌`);
+      setSizeQtys(newSz ? {[newSz]: safeQty} : {});
+    }
+  };
+
+  // 단체복: 사이즈별 수량
+  const setBulkSzQ=(sz,val)=>{
     const max=Number(selUni?.sizes?.[sz]||0);
     const v=Math.max(0,Math.min(Number(val)||0,max));
-    setSizeQtys(p=>{const n={...p};if(v===0)delete n[sz];else n[sz]=v;return n;});
+    setBulkSizeQtys(p=>{const n={...p};if(v===0)delete n[sz];else n[sz]=v;return n;});
   };
+  const bulkTotal=Object.values(bulkSizeQtys).reduce((a,v)=>a+v,0);
+
   const handleSave=()=>{
-    const payload={...f,sizeQtys:iU?sizeQtys:undefined};
-    if(iU&&selUni&&totalQty>0&&!f.detail.includes("벌")){
-      const str=Object.entries(sizeQtys).map(([sz,q])=>`${sz}×${q}`).join(", ");
-      payload.detail=`${selUni.name} ${totalQty}벌 (${str})`;
+    let payload={...f};
+    if(iU && isSingle && selUni && selSize){
+      payload.sizeQtys={[selSize]:selQty};
+      payload.selSize=selSize; payload.selQty=selQty;
+    } else if(iU && !isSingle && selUni && bulkTotal>0){
+      payload.sizeQtys=bulkSizeQtys;
+      if(!f.detail||f.detail===selUni?.name){
+        const str=Object.entries(bulkSizeQtys).map(([sz,q])=>`${sz}×${q}`).join(", ");
+        payload.detail=`${selUni.name} ${bulkTotal}벌 (${str})`;
+      }
     }
     onSave(payload);
   };
 
   const SIZES_ORDER=["2XS","XS","S","M","L","XL","2XL","3XL","4XL","5XL","SS","MS","LS","XLS"];
-  const sortedSizes=(obj)=>{
-    const keys=Object.keys(obj||{});
-    return keys.sort((a,b)=>{const ia=SIZES_ORDER.indexOf(a);const ib=SIZES_ORDER.indexOf(b);if(ia>=0&&ib>=0)return ia-ib;if(ia>=0)return -1;if(ib>=0)return 1;return a.localeCompare(b);});
-  };
+  const sortedSizes=(obj)=>Object.keys(obj||{}).sort((a,b)=>{
+    const ia=SIZES_ORDER.indexOf(a),ib=SIZES_ORDER.indexOf(b);
+    if(ia>=0&&ib>=0)return ia-ib; if(ia>=0)return -1; if(ib>=0)return 1; return a.localeCompare(b);
+  });
 
   return <Modal title={`${iU?"👕 유니폼":"🏓 용품"} 매출 ${initial?"수정":"등록"}`} onClose={onClose}>
     <div style={GS.fGrid}>
       <MFR label="날짜"><input type="date" style={GS.inp} value={f.date} onChange={e=>s("date",e.target.value)}/></MFR>
       <MFR label="거래처명"><input style={GS.inp} value={f.customer} onChange={e=>s("customer",e.target.value)} placeholder="동호회명"/></MFR>
     </div>
-    <MFR label="주문유형"><div style={GS.chips}>{(iU?["단품판매","단체복 등판 제작","기타"]:["라켓","러버","공","가방","기타용품"]).map(t=><Chip key={t} active={f.orderType===t} onClick={()=>s("orderType",t)}>{t}</Chip>)}</div></MFR>
+    <MFR label="주문유형"><div style={GS.chips}>{(iU?["단품판매","단체복 등판 제작","기타"]:["라켓","러버","공","가방","기타용품"]).map(t=><Chip key={t} active={f.orderType===t} onClick={()=>{s("orderType",t);setSelSize("");setSelQty(1);setSizeQtys({});setBulkSizeQtys({});if(selUni){s("sales","");s("cost","");s("detail",selUni.name);}}}>{t}</Chip>)}</div></MFR>
 
+    {/* ── 유니폼 선택 (유니폼 매출 공통) ── */}
     {iU&&<MFR label="유니폼 선택">
       <select style={GS.inp} value={selUniId} onChange={e=>pickUni(e.target.value)}>
         <option value="">— 유니폼을 선택하세요 —</option>
@@ -2254,72 +2309,154 @@ function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
           return <option key={u.id} value={u.id}>{u.name} ({u.year}년 · 재고 {tot}벌)</option>;
         })}
       </select>
-
-      {selUni&&<div style={{marginTop:10,background:"#0b0f1a",borderRadius:10,border:"1px solid #1e293b",padding:"10px 12px"}}>
-        {/* 유니폼 미리보기 헤더 */}
-        <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,paddingBottom:8,borderBottom:"1px solid #1e293b"}}>
-          {selUni.imgSrc
-            ?<img src={selUni.imgSrc} style={{width:44,height:44,objectFit:"cover",borderRadius:6,border:"1px solid #1e293b"}} alt=""/>
-            :<div style={{width:44,height:44,borderRadius:6,background:"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>👕</div>
-          }
-          <div style={{flex:1}}>
-            <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{selUni.name}</div>
-            <div style={{fontSize:11,color:"#64748b",marginTop:1}}>{selUni.year}년도 · 총 {Object.values(selUni.sizes||{}).reduce((a,v)=>a+Number(v||0),0)}벌 재고</div>
-          </div>
-          {totalQty>0&&<div style={{background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",borderRadius:7,padding:"4px 10px",textAlign:"center",flexShrink:0}}>
-            <div style={{fontSize:10,color:"#f59e0b"}}>선택수량</div>
-            <div style={{fontSize:16,fontWeight:800,color:"#fcd34d"}}>{totalQty}벌</div>
-          </div>}
-        </div>
-
-        {/* 사이즈별 수량 입력 */}
-        {Object.keys(selUni.sizes||{}).length===0
-          ?<div style={{fontSize:12,color:"#475569",textAlign:"center",padding:"8px 0"}}>등록된 사이즈 없음</div>
-          :<div>
-            <div style={{display:"grid",gridTemplateColumns:"44px 1fr 44px 90px",gap:5,fontSize:10,color:"#64748b",fontWeight:600,marginBottom:6,paddingLeft:2}}>
-              <span>사이즈</span><span>재고 현황</span><span style={{textAlign:"center"}}>재고</span><span style={{textAlign:"center"}}>판매수량</span>
-            </div>
-            {sortedSizes(selUni.sizes).map(sz=>{
-              const stk=Number(selUni.sizes[sz]||0);
-              const sel=sizeQtys[sz]||0;
-              const maxStk=Math.max(...Object.values(selUni.sizes).map(v=>Number(v||0)),1);
-              const barW=Math.round((stk/maxStk)*100);
-              const selW=stk>0?Math.round((sel/stk)*100):0;
-              const empty=stk===0;
-              return <div key={sz} style={{display:"grid",gridTemplateColumns:"44px 1fr 44px 90px",gap:5,alignItems:"center",marginBottom:5,opacity:empty?0.45:1}}>
-                <span style={{fontSize:12,fontWeight:700,color:empty?"#4b5563":sel>0?"#f59e0b":"#94a3b8",textAlign:"center"}}>{sz}</span>
-                <div style={{position:"relative",height:16,background:"#1e293b",borderRadius:4,overflow:"hidden"}}>
-                  {empty
-                    ?<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:9,color:"#ef4444",fontWeight:700}}>품절</span></div>
-                    :<>
-                      <div style={{position:"absolute",top:0,left:0,height:"100%",width:`${barW}%`,background:"#1e3a5f",borderRadius:4}}/>
-                      {sel>0&&<div style={{position:"absolute",top:0,left:0,height:"100%",width:`${selW}%`,background:"#f59e0b",borderRadius:4,transition:"width 0.2s"}}/>}
-                    </>
-                  }
-                </div>
-                <span style={{fontSize:12,fontWeight:600,textAlign:"center",color:empty?"#ef4444":stk<=3?"#f59e0b":"#10b981"}}>{stk}</span>
-                <div style={{display:"flex",alignItems:"center",gap:2,justifyContent:"center"}}>
-                  <button disabled={empty||sel<=0} onClick={()=>setSzQ(sz,sel-1)}
-                    style={{width:22,height:22,borderRadius:4,background:empty||sel<=0?"#0b0f1a":"#1e293b",border:"1px solid #334155",color:empty||sel<=0?"#374151":"white",cursor:empty||sel<=0?"default":"pointer",fontSize:13,padding:0}}>−</button>
-                  <input type="number" min={0} max={stk} disabled={empty}
-                    value={sizeQtys[sz]||""}
-                    onChange={e=>setSzQ(sz,e.target.value)}
-                    placeholder="0"
-                    style={{...GS.inp,width:34,padding:"2px 3px",fontSize:12,textAlign:"center",color:sel>0?"#fcd34d":"#64748b",fontWeight:sel>0?700:400}}/>
-                  <button disabled={empty||sel>=stk} onClick={()=>setSzQ(sz,sel+1)}
-                    style={{width:22,height:22,borderRadius:4,background:empty||sel>=stk?"#0b0f1a":"#1e293b",border:"1px solid #334155",color:empty||sel>=stk?"#374151":"white",cursor:empty||sel>=stk?"default":"pointer",fontSize:13,padding:0}}>+</button>
-                </div>
-              </div>;
-            })}
-            <div style={{display:"flex",gap:5,marginTop:6,paddingTop:8,borderTop:"1px solid #1e293b"}}>
-              <SBtn onClick={()=>{const n={};sortedSizes(selUni.sizes).forEach(sz=>{if(Number(selUni.sizes[sz])>0)n[sz]=Number(selUni.sizes[sz]);});setSizeQtys(n);}} color="#374151">전체 선택</SBtn>
-              <SBtn onClick={()=>setSizeQtys({})} color="#7f1d1d">초기화</SBtn>
-              {totalQty>0&&<span style={{fontSize:11,color:"#f59e0b",alignSelf:"center",marginLeft:4}}>총 {totalQty}벌 선택됨</span>}
-            </div>
-          </div>
-        }
-      </div>}
     </MFR>}
+
+    {/* ══ 단품판매 — 사이즈 + 수량 선택 ══ */}
+    {iU && isSingle && selUni && (
+      <MFR label="사이즈 & 수량 선택">
+        <div style={{background:"#0b0f1a",borderRadius:10,border:"1px solid #1e293b",padding:"12px 14px"}}>
+          {/* 유니폼 정보 */}
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:12,paddingBottom:10,borderBottom:"1px solid #1e293b"}}>
+            {selUni.imgSrc
+              ?<img src={selUni.imgSrc} style={{width:40,height:40,objectFit:"cover",borderRadius:6,border:"1px solid #1e293b"}} alt=""/>
+              :<div style={{width:40,height:40,borderRadius:6,background:"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:20}}>👕</div>
+            }
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{selUni.name}</div>
+              <div style={{display:"flex",gap:10,marginTop:2}}>
+                {selUni.sellPrice>0&&<span style={{fontSize:11,color:"#f59e0b"}}>판매단가 {won(selUni.sellPrice)}</span>}
+                {selUni.costPrice>0&&<span style={{fontSize:11,color:"#64748b"}}>매입단가 {won(selUni.costPrice)}</span>}
+                {!selUni.sellPrice&&!selUni.costPrice&&<span style={{fontSize:11,color:"#ef4444"}}>⚠ 재고관리에서 단가를 입력해주세요</span>}
+              </div>
+            </div>
+          </div>
+
+          {/* 사이즈 선택 버튼 */}
+          <div style={{marginBottom:10}}>
+            <div style={{fontSize:11,color:"#64748b",marginBottom:6,fontWeight:600}}>사이즈 선택</div>
+            <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
+              {sortedSizes(selUni.sizes).map(sz=>{
+                const stk=Number(selUni.sizes[sz]||0);
+                const isSel=selSize===sz;
+                const isEmpty=stk===0;
+                return <button key={sz} disabled={isEmpty} onClick={()=>handleSingleChange(sz, selQty)}
+                  style={{
+                    padding:"6px 12px",borderRadius:7,border:`1px solid ${isSel?"#f59e0b":isEmpty?"#1e293b":"#334155"}`,
+                    background:isSel?"rgba(245,158,11,0.15)":isEmpty?"#0b0f1a":"#1e293b",
+                    color:isSel?"#fcd34d":isEmpty?"#374151":"#94a3b8",
+                    cursor:isEmpty?"default":"pointer",fontWeight:isSel?700:400,
+                    fontSize:12,transition:"all 0.15s",position:"relative",
+                  }}>
+                  {sz}
+                  <span style={{
+                    display:"block",fontSize:9,marginTop:1,
+                    color:isEmpty?"#ef4444":stk<=3?"#f59e0b":"#10b981"
+                  }}>{isEmpty?"품절":`${stk}개`}</span>
+                </button>;
+              })}
+            </div>
+          </div>
+
+          {/* 수량 입력 (사이즈 선택 후) */}
+          {selSize&&(
+            <div style={{display:"flex",alignItems:"center",gap:10,paddingTop:10,borderTop:"1px solid #1e293b"}}>
+              <div style={{fontSize:12,color:"#94a3b8"}}>
+                <span style={{color:"#f59e0b",fontWeight:700}}>{selSize}</span> 수량
+                <span style={{fontSize:10,color:"#64748b",marginLeft:4}}>(재고 {Number(selUni.sizes[selSize]||0)}개)</span>
+              </div>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:"auto"}}>
+                <button onClick={()=>handleSingleChange(undefined, selQty-1)} disabled={selQty<=1}
+                  style={{width:28,height:28,borderRadius:7,background:selQty<=1?"#0b0f1a":"#1e293b",border:"1px solid #334155",color:selQty<=1?"#374151":"white",cursor:selQty<=1?"default":"pointer",fontSize:16,lineHeight:1,padding:0}}>−</button>
+                <input type="number" min={1} max={Number(selUni.sizes[selSize]||0)}
+                  value={selQty}
+                  onChange={e=>handleSingleChange(undefined, e.target.value)}
+                  style={{...GS.inp,width:54,textAlign:"center",fontWeight:700,fontSize:14,color:"#fcd34d",padding:"4px 6px"}}/>
+                <button onClick={()=>handleSingleChange(undefined, selQty+1)} disabled={selQty>=Number(selUni.sizes[selSize]||0)}
+                  style={{width:28,height:28,borderRadius:7,background:selQty>=Number(selUni.sizes[selSize]||0)?"#0b0f1a":"#1e293b",border:"1px solid #334155",color:selQty>=Number(selUni.sizes[selSize]||0)?"#374151":"white",cursor:selQty>=Number(selUni.sizes[selSize]||0)?"default":"pointer",fontSize:16,lineHeight:1,padding:0}}>+</button>
+              </div>
+            </div>
+          )}
+
+          {/* 자동계산 결과 미리보기 */}
+          {selSize && selUni.sellPrice>0 && (
+            <div style={{marginTop:10,background:"#0f172a",borderRadius:7,padding:"8px 12px",border:"1px solid #1e3a5f"}}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                <span style={{fontSize:11,color:"#64748b"}}>매출액 ({won(selUni.sellPrice)} × {selQty}벌)</span>
+                <span style={{fontWeight:700,color:"#f59e0b",fontSize:13}}>{won(Number(selUni.sellPrice)*selQty)}</span>
+              </div>
+              {selUni.costPrice>0&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                <span style={{fontSize:11,color:"#64748b"}}>수입원가 ({won(selUni.costPrice)} × {selQty}벌)</span>
+                <span style={{fontWeight:700,color:"#94a3b8",fontSize:13}}>{won(Number(selUni.costPrice)*selQty)}</span>
+              </div>}
+              {selUni.costPrice>0&&<div style={{display:"flex",justifyContent:"space-between",paddingTop:5,borderTop:"1px solid #1e293b"}}>
+                <span style={{fontSize:11,color:"#64748b"}}>예상 순이익</span>
+                <span style={{fontWeight:700,color:"#10b981",fontSize:13}}>{won((Number(selUni.sellPrice)-Number(selUni.costPrice))*selQty)}</span>
+              </div>}
+            </div>
+          )}
+        </div>
+      </MFR>
+    )}
+
+    {/* ══ 단체복/기타 — 사이즈별 멀티 수량 ══ */}
+    {iU && !isSingle && selUni && (
+      <MFR label="사이즈별 수량 (단체복)">
+        <div style={{background:"#0b0f1a",borderRadius:10,border:"1px solid #1e293b",padding:"10px 12px"}}>
+          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10,paddingBottom:8,borderBottom:"1px solid #1e293b"}}>
+            {selUni.imgSrc
+              ?<img src={selUni.imgSrc} style={{width:36,height:36,objectFit:"cover",borderRadius:5}} alt=""/>
+              :<div style={{width:36,height:36,borderRadius:5,background:"#1e293b",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18}}>👕</div>
+            }
+            <div style={{flex:1}}>
+              <div style={{fontWeight:600,fontSize:12,color:"#f1f5f9"}}>{selUni.name}</div>
+              <div style={{fontSize:10,color:"#64748b",marginTop:1}}>{selUni.year}년도</div>
+            </div>
+            {bulkTotal>0&&<div style={{background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",borderRadius:6,padding:"3px 9px",textAlign:"center"}}>
+              <div style={{fontSize:9,color:"#f59e0b"}}>선택</div>
+              <div style={{fontSize:14,fontWeight:800,color:"#fcd34d"}}>{bulkTotal}벌</div>
+            </div>}
+          </div>
+          <div style={{display:"grid",gridTemplateColumns:"44px 1fr 44px 90px",gap:5,fontSize:10,color:"#64748b",fontWeight:600,marginBottom:6,paddingLeft:2}}>
+            <span>사이즈</span><span>재고 현황</span><span style={{textAlign:"center"}}>재고</span><span style={{textAlign:"center"}}>판매수량</span>
+          </div>
+          {sortedSizes(selUni.sizes).map(sz=>{
+            const stk=Number(selUni.sizes[sz]||0);
+            const sel=bulkSizeQtys[sz]||0;
+            const maxStk=Math.max(...Object.values(selUni.sizes).map(v=>Number(v||0)),1);
+            const empty=stk===0;
+            return <div key={sz} style={{display:"grid",gridTemplateColumns:"44px 1fr 44px 90px",gap:5,alignItems:"center",marginBottom:5,opacity:empty?0.45:1}}>
+              <span style={{fontSize:12,fontWeight:700,color:empty?"#4b5563":sel>0?"#f59e0b":"#94a3b8",textAlign:"center"}}>{sz}</span>
+              <div style={{position:"relative",height:14,background:"#1e293b",borderRadius:3,overflow:"hidden"}}>
+                {empty
+                  ?<div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center"}}><span style={{fontSize:9,color:"#ef4444",fontWeight:700}}>품절</span></div>
+                  :<>
+                    <div style={{position:"absolute",top:0,left:0,height:"100%",width:`${Math.round((stk/maxStk)*100)}%`,background:"#1e3a5f",borderRadius:3}}/>
+                    {sel>0&&<div style={{position:"absolute",top:0,left:0,height:"100%",width:`${Math.round((sel/stk)*100)}%`,background:"#f59e0b",borderRadius:3,transition:"width 0.2s"}}/>}
+                  </>
+                }
+              </div>
+              <span style={{fontSize:12,fontWeight:600,textAlign:"center",color:empty?"#ef4444":stk<=3?"#f59e0b":"#10b981"}}>{stk}</span>
+              <div style={{display:"flex",alignItems:"center",gap:2,justifyContent:"center"}}>
+                <button disabled={empty||sel<=0} onClick={()=>setBulkSzQ(sz,sel-1)}
+                  style={{width:20,height:20,borderRadius:4,background:empty||sel<=0?"#0b0f1a":"#1e293b",border:"1px solid #334155",color:empty||sel<=0?"#374151":"white",cursor:empty||sel<=0?"default":"pointer",fontSize:13,padding:0}}>−</button>
+                <input type="number" min={0} max={stk} disabled={empty}
+                  value={bulkSizeQtys[sz]||""}
+                  onChange={e=>setBulkSzQ(sz,e.target.value)}
+                  placeholder="0"
+                  style={{...GS.inp,width:32,padding:"2px 3px",fontSize:12,textAlign:"center",color:sel>0?"#fcd34d":"#64748b",fontWeight:sel>0?700:400}}/>
+                <button disabled={empty||sel>=stk} onClick={()=>setBulkSzQ(sz,sel+1)}
+                  style={{width:20,height:20,borderRadius:4,background:empty||sel>=stk?"#0b0f1a":"#1e293b",border:"1px solid #334155",color:empty||sel>=stk?"#374151":"white",cursor:empty||sel>=stk?"default":"pointer",fontSize:13,padding:0}}>+</button>
+              </div>
+            </div>;
+          })}
+          <div style={{display:"flex",gap:5,marginTop:6,paddingTop:8,borderTop:"1px solid #1e293b"}}>
+            <SBtn onClick={()=>{const n={};sortedSizes(selUni.sizes).forEach(sz=>{if(Number(selUni.sizes[sz])>0)n[sz]=Number(selUni.sizes[sz]);});setBulkSizeQtys(n);}} color="#374151">전체 선택</SBtn>
+            <SBtn onClick={()=>setBulkSizeQtys({})} color="#7f1d1d">초기화</SBtn>
+            {bulkTotal>0&&<span style={{fontSize:11,color:"#f59e0b",alignSelf:"center",marginLeft:4}}>총 {bulkTotal}벌</span>}
+          </div>
+        </div>
+      </MFR>
+    )}
 
     <MFR label="거래내역"><textarea style={{...GS.inp,height:54,resize:"vertical"}} value={f.detail} onChange={e=>s("detail",e.target.value)} placeholder="예) 올가 단체복 38벌"/></MFR>
     <div style={GS.fGrid}>
@@ -2334,32 +2471,7 @@ function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
     <MFR label="송장번호"><input style={GS.inp} value={f.tracking} onChange={e=>s("tracking",e.target.value)} placeholder="택배 송장번호"/></MFR>
     <div style={GS.mBtns}><SBtn onClick={handleSave} color={iU?"#f59e0b":"#10b981"} full>{initial?"수정":"등록"}</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
   </Modal>;
-}){
-  const iU=type==="uniform";
-  const [f,setF]=useState({date:td(),customer:"",orderType:iU?"단품판매":"라켓",detail:"",sales:"",cost:"",payMethod:"계좌이체",paid:false,tracking:"",memo:"",...(initial||{})});
-  const s=(k,v)=>setF(p=>({...p,[k]:v}));
-  const profit=Number(f.sales||0)-Number(f.cost||0);
-  return <Modal title={`${iU?"👕 유니폼":"🏓 용품"} 매출 ${initial?"수정":"등록"}`} onClose={onClose}>
-    <div style={GS.fGrid}>
-      <MFR label="날짜"><input type="date" style={GS.inp} value={f.date} onChange={e=>s("date",e.target.value)}/></MFR>
-      <MFR label="거래처명"><input style={GS.inp} value={f.customer} onChange={e=>s("customer",e.target.value)} placeholder="동호회명"/></MFR>
-    </div>
-    <MFR label="주문유형"><div style={GS.chips}>{(iU?["단품판매","단체복 등판 제작","기타"]:["라켓","러버","공","가방","기타용품"]).map(t=><Chip key={t} active={f.orderType===t} onClick={()=>s("orderType",t)}>{t}</Chip>)}</div></MFR>
-    <MFR label="거래내역"><textarea style={{...GS.inp,height:54,resize:"vertical"}} value={f.detail} onChange={e=>s("detail",e.target.value)} placeholder="예) 올가 단체복 38벌"/></MFR>
-    <div style={GS.fGrid}>
-      <MFR label="매출액"><input type="number" style={GS.inp} value={f.sales} onChange={e=>s("sales",e.target.value)}/></MFR>
-      <MFR label="수입원가"><input type="number" style={GS.inp} value={f.cost} onChange={e=>s("cost",e.target.value)}/></MFR>
-    </div>
-    {(f.sales||f.cost)&&<div style={{display:"flex",justifyContent:"space-between",background:"#0b0f1a",borderRadius:6,padding:"7px 12px",marginBottom:10}}><span style={{fontSize:11,color:"#94a3b8"}}>순이익</span><span style={{fontWeight:700,color:profit>=0?"#10b981":"#ef4444"}}>{won(profit)}</span></div>}
-    <div style={GS.fGrid}>
-      <MFR label="결제수단"><select style={GS.inp} value={f.payMethod} onChange={e=>s("payMethod",e.target.value)}>{PAY_METHODS.map(m=><option key={m}>{m}</option>)}</select></MFR>
-      <MFR label="입금여부"><div style={GS.chips}><Chip active={f.paid} onClick={()=>s("paid",true)} green>✓ 입금완료</Chip><Chip active={!f.paid} onClick={()=>s("paid",false)} red>미수금</Chip></div></MFR>
-    </div>
-    <MFR label="송장번호"><input style={GS.inp} value={f.tracking} onChange={e=>s("tracking",e.target.value)} placeholder="택배 송장번호"/></MFR>
-    <div style={GS.mBtns}><SBtn onClick={()=>onSave(f)} color={iU?"#f59e0b":"#10b981"} full>{initial?"수정":"등록"}</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
-  </Modal>;
 }
-
 /* ═══════════════════════════════════════════════════════
    MODULE 4 — ORDERS
 ═══════════════════════════════════════════════════════ */
