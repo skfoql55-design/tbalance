@@ -663,7 +663,17 @@ function DesignTool() {
 
   useEffect(()=>{ (async()=>{
   try{ const r=await window.storage.list("ds:"); if(r?.keys)setSaves(r.keys); }catch{}
-  try{ const r=await window.storage.get("ds:__mockupLib"); if(r?.value)setLib(JSON.parse(r.value)); }catch{}
+  // 이미지별 개별 key로 로드 (5MB 제한 우회)
+  try{
+    const nr=await window.storage.get("ds:__mknames");
+    if(nr?.value){
+      const names=JSON.parse(nr.value);
+      const items=await Promise.all(names.map(async name=>{
+        try{ const ir=await window.storage.get(`ds:__mkimg:${name}`); return ir?.value?{name,src:ir.value}:null; }catch{ return null; }
+      }));
+      setLib(items.filter(Boolean));
+    }
+  }catch{}
 })(); },[]);
 
   const addText = (preset) => {
@@ -678,20 +688,35 @@ const addToLib = async (files) => {
   const loaded = await Promise.all(arr.map(f=>new Promise(res=>{
     const r=new FileReader(); r.onload=e=>res({name:f.name.replace(/\.[^/.]+$/,""),src:e.target.result}); r.readAsDataURL(f);
   })));
+  // 이미지별 개별 key로 저장 (5MB 제한 우회)
+  let savedCount=0;
+  for(const item of loaded){
+    try{
+      await window.storage.set(`ds:__mkimg:${item.name}`, item.src);
+      savedCount++;
+    }catch(e){ console.warn(`이미지 저장 실패: ${item.name}`, e); }
+  }
   setLib(prev => {
-    // 이름 중복은 덮어쓰기
     const map = Object.fromEntries(prev.map(x=>[x.name,x]));
     loaded.forEach(x=>{ map[x.name]=x; });
     const next = Object.values(map);
-    (async()=>{ try{ await window.storage.set("ds:__mockupLib", JSON.stringify(next)); }catch{} })();
+    // 이름 목록만 별도 key에 저장
+    (async()=>{ try{ await window.storage.set("ds:__mknames", JSON.stringify(next.map(x=>x.name))); }catch{} })();
     return next;
   });
-  toast(`${loaded.length}개 이미지 등록 완료!`);
+  if(savedCount < loaded.length){
+    toast(`${savedCount}/${loaded.length}개 저장 완료 (나머지는 용량 초과)`, savedCount>0);
+  } else {
+    toast(`${savedCount}개 이미지 등록 완료!`);
+  }
 };
 const removeFromLib = async (name) => {
+  // 개별 이미지 key 삭제
+  try{ await window.storage.delete(`ds:__mkimg:${name}`); }catch{}
   setLib(prev => {
     const next = prev.filter(x=>x.name!==name);
-    (async()=>{ try{ await window.storage.set("ds:__mockupLib", JSON.stringify(next)); }catch{} })();
+    // 이름 목록 업데이트
+    (async()=>{ try{ await window.storage.set("ds:__mknames", JSON.stringify(next.map(x=>x.name))); }catch{} })();
     return next;
   });
   if(selLib===name) setSelLib("");
