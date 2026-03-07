@@ -9,6 +9,51 @@ import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
    GLOBAL HELPERS — Firebase Firestore 기반
 ═══════════════════════════════════════════════════════ */
 const COLL = "storage";
+
+/* ── IndexedDB 헬퍼 (디자인툴 대용량 저장용) ── */
+const _IDB_NAME = "tbalance_design";
+const _IDB_VER  = 1;
+const _idbOpen  = () => new Promise((res, rej) => {
+  const req = indexedDB.open(_IDB_NAME, _IDB_VER);
+  req.onupgradeneeded = e => e.target.result.createObjectStore("kv");
+  req.onsuccess  = e => res(e.target.result);
+  req.onerror    = e => rej(e.target.error);
+});
+const idbSet = async (key, value) => {
+  const db = await _idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction("kv", "readwrite");
+    tx.objectStore("kv").put(value, key);
+    tx.oncomplete = res; tx.onerror = e => rej(e.target.error);
+  });
+};
+const idbGet = async (key) => {
+  const db = await _idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction("kv", "readonly");
+    const req = tx.objectStore("kv").get(key);
+    req.onsuccess = e => res(e.target.result ?? null);
+    req.onerror   = e => rej(e.target.error);
+  });
+};
+const idbDel = async (key) => {
+  const db = await _idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction("kv", "readwrite");
+    tx.objectStore("kv").delete(key);
+    tx.oncomplete = res; tx.onerror = e => rej(e.target.error);
+  });
+};
+const idbKeys = async (prefix) => {
+  const db = await _idbOpen();
+  return new Promise((res, rej) => {
+    const tx = db.transaction("kv", "readonly");
+    const req = tx.objectStore("kv").getAllKeys();
+    req.onsuccess = e => res((e.target.result||[]).filter(k=>k.startsWith(prefix)));
+    req.onerror   = e => rej(e.target.error);
+  });
+};
+
 const sv = async (k, v) => {
   try {
     await setDoc(doc(db, COLL, k.replace(/[:/]/g, "_")), { value: JSON.stringify(v) });
@@ -662,19 +707,19 @@ function DesignTool() {
   const toast = (m,ok=true) => { setToast({m,ok}); setTimeout(()=>setToast(null),2200); };
 
   useEffect(()=>{ (async()=>{
-  try{ const r=await window.storage.list("ds:"); if(r?.keys)setSaves(r.keys); }catch{}
-  // 이미지별 개별 key로 로드 (5MB 제한 우회)
-  try{
-    const nr=await window.storage.get("ds:__mknames");
-    if(nr?.value){
-      const names=JSON.parse(nr.value);
-      const items=await Promise.all(names.map(async name=>{
-        try{ const ir=await window.storage.get(`ds:__mkimg:${name}`); return ir?.value?{name,src:ir.value}:null; }catch{ return null; }
-      }));
-      setLib(items.filter(Boolean));
-    }
-  }catch{}
-})(); },[]);
+    // 거래처 저장 목록 로드
+    try{ const ks=await idbKeys("ds:"); setSaves(ks.filter(k=>!k.startsWith("ds:__"))); }catch{}
+    // 목업 이미지 라이브러리 로드
+    try{
+      const names = await idbGet("ds:__mknames");
+      if(names){
+        const items = await Promise.all(names.map(async name=>{
+          try{ const src=await idbGet(`ds:__mkimg:${name}`); return src?{name,src}:null; }catch{ return null; }
+        }));
+        setLib(items.filter(Boolean));
+      }
+    }catch(e){ console.error("라이브러리 로드 실패",e); }
+  })(); },[]);
 
   const addText = (preset) => {
     const id=nid();
@@ -688,11 +733,11 @@ const addToLib = async (files) => {
   const loaded = await Promise.all(arr.map(f=>new Promise(res=>{
     const r=new FileReader(); r.onload=e=>res({name:f.name.replace(/\.[^/.]+$/,""),src:e.target.result}); r.readAsDataURL(f);
   })));
-  // 이미지별 개별 key로 저장 (5MB 제한 우회)
+  // 이미지별 IndexedDB 저장 (용량 제한 없음)
   let savedCount=0;
   for(const item of loaded){
     try{
-      await window.storage.set(`ds:__mkimg:${item.name}`, item.src);
+      await idbSet(`ds:__mkimg:${item.name}`, item.src);
       savedCount++;
     }catch(e){ console.warn(`이미지 저장 실패: ${item.name}`, e); }
   }
@@ -700,23 +745,16 @@ const addToLib = async (files) => {
     const map = Object.fromEntries(prev.map(x=>[x.name,x]));
     loaded.forEach(x=>{ map[x.name]=x; });
     const next = Object.values(map);
-    // 이름 목록만 별도 key에 저장
-    (async()=>{ try{ await window.storage.set("ds:__mknames", JSON.stringify(next.map(x=>x.name))); }catch{} })();
+    (async()=>{ try{ await idbSet("ds:__mknames", next.map(x=>x.name)); }catch{} })();
     return next;
   });
-  if(savedCount < loaded.length){
-    toast(`${savedCount}/${loaded.length}개 저장 완료 (나머지는 용량 초과)`, savedCount>0);
-  } else {
-    toast(`${savedCount}개 이미지 등록 완료!`);
-  }
+  toast(`${savedCount}개 이미지 등록 완료!`);
 };
 const removeFromLib = async (name) => {
-  // 개별 이미지 key 삭제
-  try{ await window.storage.delete(`ds:__mkimg:${name}`); }catch{}
+  try{ await idbDel(`ds:__mkimg:${name}`); }catch{}
   setLib(prev => {
     const next = prev.filter(x=>x.name!==name);
-    // 이름 목록 업데이트
-    (async()=>{ try{ await window.storage.set("ds:__mknames", JSON.stringify(next.map(x=>x.name))); }catch{} })();
+    (async()=>{ try{ await idbSet("ds:__mknames", next.map(x=>x.name)); }catch{} })();
     return next;
   });
   if(selLib===name) setSelLib("");
@@ -779,9 +817,9 @@ const addLogo = (file) => {
   };
   const download = async()=>{ const cv=await renderCanvas(2); const a=document.createElement("a"); a.href=cv.toDataURL("image/png"); a.download=`${custName||"등판시안"}.png`; a.click(); toast("다운로드 완료!"); };
   const copy = async()=>{ try{ const cv=await renderCanvas(2); cv.toBlob(async b=>{ await navigator.clipboard.write([new ClipboardItem({"image/png":b})]); toast("클립보드 복사 완료!"); }); }catch{ toast("복사 실패",false); } };
-  const saveCust = async()=>{ if(!custName.trim()){ toast("거래처명 입력 필요",false); return; } const k=`ds:${custName.trim()}`; await window.storage.set(k,JSON.stringify({mockup,layers})); const r=await window.storage.list("ds:"); if(r?.keys)setSaves(r.keys); toast(`"${custName}" 저장 완료!`); };
-  const loadCust = async(k)=>{ try{ const r=await window.storage.get(k); if(!r)return; const d=JSON.parse(r.value); setMockup(d.mockup||null); setLayers(d.layers||[]); setCN(k.replace("ds:","")); setSel(null); toast(`불러오기 완료!`); }catch{} };
-  const delCust  = async(k)=>{ await window.storage.delete(k); const r=await window.storage.list("ds:"); if(r?.keys)setSaves(r.keys); };
+  const saveCust = async()=>{ if(!custName.trim()){ toast("거래처명 입력 필요",false); return; } const k=`ds:${custName.trim()}`; await idbSet(k,JSON.stringify({mockup,layers})); const ks=await idbKeys("ds:"); setSaves(ks.filter(k=>!k.startsWith("ds:__"))); toast(`"${custName}" 저장 완료!`); };
+  const loadCust = async(k)=>{ try{ const r=await idbGet(k); if(!r)return; const d=JSON.parse(r); setMockup(d.mockup||null); setLayers(d.layers||[]); setCN(k.replace("ds:","")); setSel(null); toast(`불러오기 완료!`); }catch(e){ console.error(e); } };
+  const delCust  = async(k)=>{ await idbDel(k); const ks=await idbKeys("ds:"); setSaves(ks.filter(k=>!k.startsWith("ds:__"))); };
   const delLayer = id=>{ setLayers(p=>p.filter(l=>l.id!==id)); if(sel===id)setSel(null); };
 
   return (
