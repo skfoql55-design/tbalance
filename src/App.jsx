@@ -643,6 +643,9 @@ const COLORS=["#ffffff","#000000","#ffdd00","#ff3333","#3399ff","#00cc66","#ff66
 
 function DesignTool() {
   const [mockup, setMockup]   = useState(null);
+  const [mockupLib, setLib]   = useState([]);    // {name,src}[] 등록된 목업 라이브러리
+  const [selLib, setSelLib]   = useState("");    // 드롭다운 선택값
+  const [libDrag, setLibDrag] = useState(false); // 라이브러리 드래그오버
   const [layers, setLayers]   = useState([]);
   const [sel, setSel]         = useState(null);
   const [fonts, setFonts]     = useState(BUILTIN_FONTS);
@@ -653,19 +656,53 @@ function DesignTool() {
   const [drag, setDrag]       = useState(false);
   const dragRef = useRef(null);
   const prevRef = useRef(null);
-  const mkRef=useRef(), lgRef=useRef(), fnRef=useRef();
+  const mkRef=useRef(), lgRef=useRef(), fnRef=useRef(), libRef=useRef();
   const upd = (id,p) => setLayers(l=>l.map(x=>x.id===id?{...x,...p}:x));
   const selL = layers.find(l=>l.id===sel)||null;
   const toast = (m,ok=true) => { setToast({m,ok}); setTimeout(()=>setToast(null),2200); };
 
-  useEffect(()=>{ (async()=>{ try{const r=await window.storage.list("ds:");if(r?.keys)setSaves(r.keys);}catch{}})(); },[]);
+  useEffect(()=>{ (async()=>{
+  try{ const r=await window.storage.list("ds:"); if(r?.keys)setSaves(r.keys); }catch{}
+  try{ const r=await window.storage.get("ds:__mockupLib"); if(r?.value)setLib(JSON.parse(r.value)); }catch{}
+})(); },[]);
 
   const addText = (preset) => {
     const id=nid();
     setLayers(p=>[...p,{ id,type:"text",text:preset,x:PW/2,y:PH/2-25,fontSize:52,fontFamily:"'Arial Black',sans-serif",fontWeight:"900",color:"#ffffff",strokeColor:"#000000",strokeWidth:3,italic:false,letterSpacing:2,textAlign:"center" }]);
     setSel(id); setRTab("props");
   };
-  const addLogo = (file) => {
+  // ── 목업 라이브러리: 여러 파일 추가
+const addToLib = async (files) => {
+  const arr = Array.from(files).filter(f=>f.type.startsWith("image/"));
+  if(!arr.length) return;
+  const loaded = await Promise.all(arr.map(f=>new Promise(res=>{
+    const r=new FileReader(); r.onload=e=>res({name:f.name.replace(/\.[^/.]+$/,""),src:e.target.result}); r.readAsDataURL(f);
+  })));
+  setLib(prev => {
+    // 이름 중복은 덮어쓰기
+    const map = Object.fromEntries(prev.map(x=>[x.name,x]));
+    loaded.forEach(x=>{ map[x.name]=x; });
+    const next = Object.values(map);
+    (async()=>{ try{ await window.storage.set("ds:__mockupLib", JSON.stringify(next)); }catch{} })();
+    return next;
+  });
+  toast(`${loaded.length}개 이미지 등록 완료!`);
+};
+const removeFromLib = async (name) => {
+  setLib(prev => {
+    const next = prev.filter(x=>x.name!==name);
+    (async()=>{ try{ await window.storage.set("ds:__mockupLib", JSON.stringify(next)); }catch{} })();
+    return next;
+  });
+  if(selLib===name) setSelLib("");
+};
+const selectFromLib = (name) => {
+  setSelLib(name);
+  const item = mockupLib.find(x=>x.name===name);
+  if(item) setMockup(item.src);
+};
+
+const addLogo = (file) => {
     if(!file)return; const r=new FileReader(); r.onload=e=>{
       const img=new Image(); img.onload=()=>{
         const ratio=img.width/img.height; const w=Math.min(150,img.width); const h=w/ratio;
@@ -727,10 +764,72 @@ function DesignTool() {
       {/* LEFT */}
       <div style={D.left}>
         <Sec title="📁 목업 이미지">
-          <input type="file" accept="image/*" ref={mkRef} style={{display:"none"}} onChange={e=>{ const f=e.target.files[0]; if(!f)return; const r=new FileReader(); r.onload=ev=>setMockup(ev.target.result); r.readAsDataURL(f); }} />
-          <SBtn full onClick={()=>mkRef.current.click()}>🖼 이미지 등록</SBtn>
-          {mockup && <img src={mockup} style={{width:"100%",borderRadius:6,marginTop:6}} alt="" />}
-        </Sec>
+  {/* 다중 파일 드래그&드롭 존 */}
+  <div
+    onDragOver={e=>{e.preventDefault();setLibDrag(true);}}
+    onDragLeave={()=>setLibDrag(false)}
+    onDrop={e=>{e.preventDefault();setLibDrag(false);addToLib(e.dataTransfer.files);}}
+    onClick={()=>libRef.current.click()}
+    style={{
+      border:`2px dashed ${libDrag?"#3b82f6":"#334155"}`,
+      borderRadius:8, padding:"12px 8px", textAlign:"center",
+      cursor:"pointer", background:libDrag?"rgba(59,130,246,0.08)":"#0b0f1a",
+      transition:"all 0.15s", marginBottom:8,
+    }}>
+    <div style={{fontSize:20,marginBottom:4}}>🖼</div>
+    <div style={{fontSize:11,color:libDrag?"#60a5fa":"#64748b",lineHeight:1.4}}>
+      이미지를 드래그하거나<br/>클릭해서 등록
+    </div>
+    <div style={{fontSize:10,color:"#374151",marginTop:3}}>여러 파일 동시 등록 가능</div>
+  </div>
+  <input type="file" accept="image/*" multiple ref={libRef} style={{display:"none"}}
+    onChange={e=>addToLib(e.target.files)} />
+
+  {/* 등록된 이미지 드롭다운 선택 */}
+  {mockupLib.length>0 && <>
+    <select
+      value={selLib}
+      onChange={e=>selectFromLib(e.target.value)}
+      style={{
+        width:"100%", background:"#1e293b", border:"1px solid #334155",
+        borderRadius:7, color:"#f1f5f9", fontSize:12, padding:"6px 8px",
+        marginBottom:6, outline:"none", cursor:"pointer",
+      }}>
+      <option value="">— 이미지 선택 ({mockupLib.length}개) —</option>
+      {mockupLib.map(x=>(
+        <option key={x.name} value={x.name}>{x.name}</option>
+      ))}
+    </select>
+
+    {/* 현재 선택된 이미지 미리보기 + 삭제 */}
+    {selLib && (()=>{
+      const item=mockupLib.find(x=>x.name===selLib);
+      return item ? (
+        <div style={{position:"relative",marginBottom:6}}>
+          <img src={item.src} style={{width:"100%",borderRadius:6,display:"block"}} alt=""/>
+          <button onClick={e=>{e.stopPropagation();removeFromLib(selLib);}}
+            style={{position:"absolute",top:4,right:4,width:20,height:20,borderRadius:4,
+              background:"rgba(127,29,29,0.9)",border:"none",color:"white",cursor:"pointer",fontSize:11,lineHeight:1}}>✕</button>
+        </div>
+      ) : null;
+    })()}
+
+    {/* 등록된 이미지 썸네일 목록 */}
+    <div style={{display:"flex",flexWrap:"wrap",gap:4,maxHeight:90,overflowY:"auto"}}>
+      {mockupLib.map(x=>(
+        <div key={x.name} title={x.name}
+          onClick={()=>selectFromLib(x.name)}
+          style={{
+            width:44,height:44,borderRadius:5,overflow:"hidden",cursor:"pointer",flexShrink:0,
+            border:`2px solid ${selLib===x.name?"#3b82f6":"#1e293b"}`,
+            transition:"border-color 0.15s",
+          }}>
+          <img src={x.src} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={x.name}/>
+        </div>
+      ))}
+    </div>
+  </>}
+</Sec>
         <Sec title="✏️ 텍스트 추가">
           {["동호회명","한글명","영문명","번호","기타"].map(t=><SBtn key={t} full onClick={()=>addText(t)} style={{marginBottom:4}}>{t}</SBtn>)}
         </Sec>
