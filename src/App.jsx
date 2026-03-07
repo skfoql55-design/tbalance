@@ -601,11 +601,15 @@ function MainApp({ user, onLogout }) {
         </div>
 
         {/* PAGE CONTENT */}
+        {/* DesignTool: 탭 이탈 시에도 상태 유지를 위해 항상 마운트, display:none으로 숨김 */}
         <div style={{ flex:1, overflowY:"auto", padding: isMobile ? 12 : 20,
-          paddingBottom: isMobile ? 80 : 20 }}>
+          paddingBottom: isMobile ? 80 : 20, display: page==="design" ? "block" : "none" }}>
+          <DesignTool isMobile={isMobile}/>
+        </div>
+        <div style={{ flex:1, overflowY:"auto", padding: isMobile ? 12 : 20,
+          paddingBottom: isMobile ? 80 : 20, display: page!=="design" ? "block" : "none" }}>
           {page==="grouporders"&& <GroupOrdersPage db={db} isMobile={isMobile}/>}
           {page==="calendar"   && <CalendarPage db={db} isMobile={isMobile}/>}
-          {page==="design"    && <DesignTool isMobile={isMobile}/>}
           {page==="inventory" && <InventoryPage db={db} isMobile={isMobile}/>}
           {page==="sales"     && <SalesPage db={db} isMobile={isMobile}/>}
           {page==="orders"    && <OrdersPage db={db} isMobile={isMobile}/>}
