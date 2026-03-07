@@ -3,7 +3,7 @@ import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, L
 import { db } from "./firebase";
 import { doc, getDoc, setDoc } from "firebase/firestore";
 import { storage } from "./firebase";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 
 /* ═══════════════════════════════════════════════════════
    GLOBAL HELPERS — Firebase Firestore 기반
@@ -707,17 +707,12 @@ function DesignTool() {
   const toast = (m,ok=true) => { setToast({m,ok}); setTimeout(()=>setToast(null),2200); };
 
   useEffect(()=>{ (async()=>{
-    // 거래처 저장 목록 로드
-    try{ const ks=await idbKeys("ds:"); setSaves(ks.filter(k=>!k.startsWith("ds:__"))); }catch{}
-    // 목업 이미지 라이브러리 로드
+    // 거래처 저장 목록 로드 (Firestore)
+    try{ const list=await ld("ds:__saves",[]); setSaves(list); }catch{}
+    // 목업 이미지 라이브러리 로드 (Firestore: URL 목록)
     try{
-      const names = await idbGet("ds:__mknames");
-      if(names){
-        const items = await Promise.all(names.map(async name=>{
-          try{ const src=await idbGet(`ds:__mkimg:${name}`); return src?{name,src}:null; }catch{ return null; }
-        }));
-        setLib(items.filter(Boolean));
-      }
+      const lib=await ld("ds:__mklib",[]);
+      if(lib?.length) setLib(lib); // [{name, url}]
     }catch(e){ console.error("라이브러리 로드 실패",e); }
   })(); },[]);
 
@@ -730,31 +725,40 @@ function DesignTool() {
 const addToLib = async (files) => {
   const arr = Array.from(files).filter(f=>f.type.startsWith("image/"));
   if(!arr.length) return;
-  const loaded = await Promise.all(arr.map(f=>new Promise(res=>{
-    const r=new FileReader(); r.onload=e=>res({name:f.name.replace(/\.[^/.]+$/,""),src:e.target.result}); r.readAsDataURL(f);
-  })));
-  // 이미지별 IndexedDB 저장 (용량 제한 없음)
+  toast("업로드 중...", true);
   let savedCount=0;
-  for(const item of loaded){
+  const newItems=[];
+  for(const file of arr){
+    const name = file.name.replace(/\.[^/.]+$/,"");
     try{
-      await idbSet(`ds:__mkimg:${item.name}`, item.src);
+      const path = `mockup_lib/${name}_${Date.now()}`;
+      const url  = await uploadImage(file, path);
+      newItems.push({name, url});
       savedCount++;
-    }catch(e){ console.warn(`이미지 저장 실패: ${item.name}`, e); }
+    }catch(e){ console.warn(`업로드 실패: ${file.name}`, e); }
   }
+  if(!newItems.length){ toast("업로드 실패", false); return; }
   setLib(prev => {
     const map = Object.fromEntries(prev.map(x=>[x.name,x]));
-    loaded.forEach(x=>{ map[x.name]=x; });
+    newItems.forEach(x=>{ map[x.name]=x; });
     const next = Object.values(map);
-    (async()=>{ try{ await idbSet("ds:__mknames", next.map(x=>x.name)); }catch{} })();
+    (async()=>{ try{ await sv("ds:__mklib", next); }catch{} })();
     return next;
   });
   toast(`${savedCount}개 이미지 등록 완료!`);
 };
 const removeFromLib = async (name) => {
-  try{ await idbDel(`ds:__mkimg:${name}`); }catch{}
+  // Firebase Storage 파일 삭제 시도 (URL에서 경로 추출)
+  const item = mockupLib.find(x=>x.name===name);
+  if(item?.url && item.url.startsWith("https://")){
+    try{
+      const storageRef = ref(storage, decodeURIComponent(item.url.split("/o/")[1]?.split("?")[0]||""));
+      await deleteObject(storageRef);
+    }catch{}
+  }
   setLib(prev => {
     const next = prev.filter(x=>x.name!==name);
-    (async()=>{ try{ await idbSet("ds:__mknames", next.map(x=>x.name)); }catch{} })();
+    (async()=>{ try{ await sv("ds:__mklib", next); }catch{} })();
     return next;
   });
   if(selLib===name) setSelLib("");
@@ -762,7 +766,7 @@ const removeFromLib = async (name) => {
 const selectFromLib = (name) => {
   setSelLib(name);
   const item = mockupLib.find(x=>x.name===name);
-  if(item) setMockup(item.src);
+  if(item) setMockup(item.url || item.src);
 };
 
 const addLogo = (file) => {
@@ -817,9 +821,9 @@ const addLogo = (file) => {
   };
   const download = async()=>{ const cv=await renderCanvas(2); const a=document.createElement("a"); a.href=cv.toDataURL("image/png"); a.download=`${custName||"등판시안"}.png`; a.click(); toast("다운로드 완료!"); };
   const copy = async()=>{ try{ const cv=await renderCanvas(2); cv.toBlob(async b=>{ await navigator.clipboard.write([new ClipboardItem({"image/png":b})]); toast("클립보드 복사 완료!"); }); }catch{ toast("복사 실패",false); } };
-  const saveCust = async()=>{ if(!custName.trim()){ toast("거래처명 입력 필요",false); return; } const k=`ds:${custName.trim()}`; await idbSet(k,JSON.stringify({mockup,layers})); const ks=await idbKeys("ds:"); setSaves(ks.filter(k=>!k.startsWith("ds:__"))); toast(`"${custName}" 저장 완료!`); };
-  const loadCust = async(k)=>{ try{ const r=await idbGet(k); if(!r)return; const d=JSON.parse(r); setMockup(d.mockup||null); setLayers(d.layers||[]); setCN(k.replace("ds:","")); setSel(null); toast(`불러오기 완료!`); }catch(e){ console.error(e); } };
-  const delCust  = async(k)=>{ await idbDel(k); const ks=await idbKeys("ds:"); setSaves(ks.filter(k=>!k.startsWith("ds:__"))); };
+  const saveCust = async()=>{ if(!custName.trim()){ toast("거래처명 입력 필요",false); return; } const k=custName.trim(); const list=await ld("ds:__saves",[]); const next=[...new Set([...list,k])]; await sv("ds:__saves",next); await sv(`ds:cust:${k}`,{mockup,layers}); setSaves(next); toast(`"${custName}" 저장 완료!`); };
+  const loadCust = async(k)=>{ try{ const d=await ld(`ds:cust:${k}`,null); if(!d)return; setMockup(d.mockup||null); setLayers(d.layers||[]); setCN(k); setSel(null); toast(`불러오기 완료!`); }catch(e){ console.error(e); } };
+  const delCust  = async(k)=>{ const list=await ld("ds:__saves",[]); const next=list.filter(x=>x!==k); await sv("ds:__saves",next); setSaves(next); };
   const delLayer = id=>{ setLayers(p=>p.filter(l=>l.id!==id)); if(sel===id)setSel(null); };
 
   return (
@@ -869,7 +873,7 @@ const addLogo = (file) => {
       const item=mockupLib.find(x=>x.name===selLib);
       return item ? (
         <div style={{position:"relative",marginBottom:6}}>
-          <img src={item.src} style={{width:"100%",borderRadius:6,display:"block"}} alt=""/>
+          <img src={item.url||item.src} style={{width:"100%",borderRadius:6,display:"block"}} alt=""/>
           <button onClick={e=>{e.stopPropagation();removeFromLib(selLib);}}
             style={{position:"absolute",top:4,right:4,width:20,height:20,borderRadius:4,
               background:"rgba(127,29,29,0.9)",border:"none",color:"white",cursor:"pointer",fontSize:11,lineHeight:1}}>✕</button>
@@ -887,7 +891,7 @@ const addLogo = (file) => {
             border:`2px solid ${selLib===x.name?"#3b82f6":"#1e293b"}`,
             transition:"border-color 0.15s",
           }}>
-          <img src={x.src} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={x.name}/>
+          <img src={x.url||x.src} style={{width:"100%",height:"100%",objectFit:"cover"}} alt={x.name}/>
         </div>
       ))}
     </div>
