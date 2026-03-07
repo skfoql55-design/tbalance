@@ -695,6 +695,7 @@ function DesignTool() {
   const [mockupLib, setLib]   = useState([]);    // {name,src}[] 등록된 목업 라이브러리
   const [selLib, setSelLib]   = useState("");    // 드롭다운 선택값
   const [libDrag, setLibDrag] = useState(false); // 라이브러리 드래그오버
+  const [upProg, setUpProg]   = useState(null);  // {current,total,name} 업로드 진행상태
   const [layers, setLayers]   = useState([]);
   const [sel, setSel]         = useState(null);
   const [fonts, setFonts]     = useState(BUILTIN_FONTS);
@@ -729,11 +730,13 @@ function DesignTool() {
 const addToLib = async (files) => {
   const arr = Array.from(files).filter(f=>f.type.startsWith("image/"));
   if(!arr.length) return;
-  toast("업로드 중...", true);
+  const total = arr.length;
   let savedCount=0;
   const newItems=[];
-  for(const file of arr){
+  for(let i=0; i<arr.length; i++){
+    const file = arr[i];
     const name = file.name.replace(/\.[^/.]+$/,"");
+    setUpProg({current:i+1, total, name});
     try{
       const path = `mockup_lib/${name}_${Date.now()}`;
       const url  = await uploadImage(file, path);
@@ -741,6 +744,7 @@ const addToLib = async (files) => {
       savedCount++;
     }catch(e){ console.warn(`업로드 실패: ${file.name}`, e); }
   }
+  setUpProg(null);
   if(!newItems.length){ toast("업로드 실패", false); return; }
   setLib(prev => {
     const map = Object.fromEntries(prev.map(x=>[x.name,x]));
@@ -837,21 +841,48 @@ const addLogo = (file) => {
         <Sec title="📁 목업 이미지">
   {/* 다중 파일 드래그&드롭 존 */}
   <div
-    onDragOver={e=>{e.preventDefault();setLibDrag(true);}}
+    onDragOver={e=>{e.preventDefault();if(!upProg)setLibDrag(true);}}
     onDragLeave={()=>setLibDrag(false)}
-    onDrop={e=>{e.preventDefault();setLibDrag(false);addToLib(e.dataTransfer.files);}}
-    onClick={()=>libRef.current.click()}
+    onDrop={e=>{e.preventDefault();setLibDrag(false);if(!upProg)addToLib(e.dataTransfer.files);}}
+    onClick={()=>{ if(!upProg) libRef.current.click(); }}
     style={{
-      border:`2px dashed ${libDrag?"#3b82f6":"#334155"}`,
+      border:`2px dashed ${upProg?"#3b82f6":libDrag?"#60a5fa":"#334155"}`,
       borderRadius:8, padding:"12px 8px", textAlign:"center",
-      cursor:"pointer", background:libDrag?"rgba(59,130,246,0.08)":"#0b0f1a",
+      cursor:upProg?"default":"pointer",
+      background:upProg?"rgba(59,130,246,0.06)":libDrag?"rgba(59,130,246,0.08)":"#0b0f1a",
       transition:"all 0.15s", marginBottom:8,
     }}>
-    <div style={{fontSize:20,marginBottom:4}}>🖼</div>
-    <div style={{fontSize:11,color:libDrag?"#60a5fa":"#64748b",lineHeight:1.4}}>
-      이미지를 드래그하거나<br/>클릭해서 등록
-    </div>
-    <div style={{fontSize:10,color:"#374151",marginTop:3}}>여러 파일 동시 등록 가능</div>
+    {upProg ? (
+      /* ── 업로드 진행 중 표시 ── */
+      <div style={{padding:"4px 0"}}>
+        <div style={{fontSize:14,marginBottom:6}}>☁️</div>
+        <div style={{fontSize:11,color:"#60a5fa",fontWeight:600,marginBottom:4,
+          overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",maxWidth:"100%"}}>
+          {upProg.name}
+        </div>
+        {/* 로딩바 */}
+        <div style={{background:"#1e293b",borderRadius:99,height:6,overflow:"hidden",marginBottom:4}}>
+          <div style={{
+            height:"100%", borderRadius:99,
+            background:"linear-gradient(90deg,#3b82f6,#60a5fa)",
+            width:`${Math.round((upProg.current/upProg.total)*100)}%`,
+            transition:"width 0.3s ease",
+            boxShadow:"0 0 6px rgba(96,165,250,0.6)",
+          }}/>
+        </div>
+        <div style={{fontSize:10,color:"#64748b"}}>
+          {upProg.current} / {upProg.total}개 업로드 중...
+        </div>
+      </div>
+    ) : (
+      <>
+        <div style={{fontSize:20,marginBottom:4}}>🖼</div>
+        <div style={{fontSize:11,color:libDrag?"#60a5fa":"#64748b",lineHeight:1.4}}>
+          이미지를 드래그하거나<br/>클릭해서 등록
+        </div>
+        <div style={{fontSize:10,color:"#374151",marginTop:3}}>여러 파일 동시 등록 가능</div>
+      </>
+    )}
   </div>
   <input type="file" accept="image/*" multiple ref={libRef} style={{display:"none"}}
     onChange={e=>addToLib(e.target.files)} />
