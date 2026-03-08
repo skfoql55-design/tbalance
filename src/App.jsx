@@ -70,7 +70,7 @@ const ld = async (k, d) => {
 // Firebase Storage 이미지 업로드
 const uploadImage = async (file, path) => {
   try {
-    if(file.size > 5 * 1024 * 1024) throw new Error("5MB 초과");
+    if(file.size > 20 * 1024 * 1024) throw new Error("20MB 초과");
     const storageRef = ref(storage, path);
     await uploadBytes(storageRef, file);
     return await getDownloadURL(storageRef);
@@ -711,15 +711,25 @@ function DesignTool() {
   const selL = layers.find(l=>l.id===sel)||null;
   const toast = (m,ok=true) => { setToast({m,ok}); setTimeout(()=>setToast(null),2200); };
 
+  // ── 초기 로드
+  const libLoadedRef = useRef(false); // 초기 로드 여부 추적
   useEffect(()=>{ (async()=>{
     // 거래처 저장 목록 로드 (Firestore)
     try{ const list=await ld("ds:__saves",[]); setSaves(list); }catch{}
     // 목업 이미지 라이브러리 로드 (Firestore: URL 목록)
     try{
       const lib=await ld("ds:__mklib",[]);
-      if(lib?.length) setLib(lib); // [{name, url}]
+      if(lib?.length) setLib(lib);
     }catch(e){ console.error("라이브러리 로드 실패",e); }
+    finally{ libLoadedRef.current=true; }
   })(); },[]);
+
+  // ── mockupLib 변경될 때마다 Firestore에 자동 저장 (setState 밖에서 안전하게)
+  useEffect(()=>{
+    if(!libLoadedRef.current) return; // 초기 로드 전엔 저장 안함
+    const toSave = mockupLib.filter(x=>x.url?.startsWith("https://"));
+    sv("ds:__mklib", toSave).catch(console.error);
+  },[mockupLib]);
 
   const addText = (preset) => {
     const id=nid();
@@ -746,12 +756,11 @@ const addToLib = async (files) => {
   }
   setUpProg(null);
   if(!newItems.length){ toast("업로드 실패", false); return; }
+  // setState 순수하게: sv 호출은 mockupLib useEffect가 자동 처리
   setLib(prev => {
     const map = Object.fromEntries(prev.map(x=>[x.name,x]));
     newItems.forEach(x=>{ map[x.name]=x; });
-    const next = Object.values(map);
-    (async()=>{ try{ await sv("ds:__mklib", next); }catch{} })();
-    return next;
+    return Object.values(map);
   });
   toast(`${savedCount}개 이미지 등록 완료!`);
 };
@@ -764,11 +773,8 @@ const removeFromLib = async (name) => {
       await deleteObject(storageRef);
     }catch{}
   }
-  setLib(prev => {
-    const next = prev.filter(x=>x.name!==name);
-    (async()=>{ try{ await sv("ds:__mklib", next); }catch{} })();
-    return next;
-  });
+  // setState 순수하게: sv 호출은 mockupLib useEffect가 자동 처리
+  setLib(prev => prev.filter(x=>x.name!==name));
   if(selLib===name) setSelLib("");
 };
 const selectFromLib = (name) => {
