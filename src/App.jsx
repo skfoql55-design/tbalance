@@ -1541,10 +1541,10 @@ function InventoryPage({db}){
   // ── 구글시트 템플릿 다운로드 ──
   const downloadUniTemplate = () => {
     exportCSV("티밸런스_유니폼재고_템플릿.csv",
-      ["유니폼명","연도","2XS","XS","S","M","L","XL","2XL","3XL","4XL"],
+      ["유니폼명","연도","대리점가","용품점가","인터넷최저가","지인가","매입단가","2XS","XS","S","M","L","XL","2XL","3XL","4XL"],
       [
-        ["y25-01_스카이웨이브(블루)","2025","0","0","5","10","8","5","3","1","0"],
-        ["y25-02_그라비티(레드&블루)","2025","0","0","3","7","6","4","2","0","0"],
+        ["y25-01_스카이웨이브(블루)","2025","42000","45000","38000","35000","28000","0","0","5","10","8","5","3","1","0"],
+        ["y25-02_그라비티(레드&블루)","2025","40000","43000","36000","33000","27000","0","0","3","7","6","4","2","0","0"],
       ]
     );
     toast_("유니폼 템플릿 다운로드!");
@@ -1898,8 +1898,11 @@ function UniformModal({onClose,onSave,initial}){
   const [year,setYear]=useState(initial?.year||String(new Date().getFullYear()));
   const [imgSrc,setImg]=useState(initial?.imgSrc||null);
   const [sizes,setSizes]=useState(initial?.sizes||{});
-  const [sellPrice,setSellPrice]=useState(initial?.sellPrice||"");
-  const [costPrice,setCostPrice]=useState(initial?.costPrice||"");
+  const [agencyPrice, setAgencyPrice] = useState(initial?.agencyPrice||"");  // 대리점가
+  const [shopPrice,   setShopPrice]   = useState(initial?.shopPrice||"");    // 용품점가
+  const [netPrice,    setNetPrice]    = useState(initial?.netPrice||"");     // 인터넷최저가
+  const [friendPrice, setFriendPrice] = useState(initial?.friendPrice||""); // 지인가
+  const [costPrice,   setCostPrice]   = useState(initial?.costPrice||"");   // 매입단가
   const [cs,setCS]=useState("");
   const [uploading,setUploading]=useState(false);
   const imgRef=useRef();
@@ -1935,11 +1938,25 @@ function UniformModal({onClose,onSave,initial}){
       </MFR>
     </div>
     {/* ── 단가 정보 ── */}
+    <div style={{marginBottom:8}}>
+      <div style={{fontSize:12,color:"#94a3b8",fontWeight:600,marginBottom:6}}>💰 판매단가</div>
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+        <MFR label="대리점가 (원)">
+          <input type="number" style={GS.inp} value={agencyPrice} onChange={e=>setAgencyPrice(e.target.value)} placeholder="예) 42000"/>
+        </MFR>
+        <MFR label="용품점가 (원)">
+          <input type="number" style={GS.inp} value={shopPrice} onChange={e=>setShopPrice(e.target.value)} placeholder="예) 45000"/>
+        </MFR>
+        <MFR label="인터넷최저가 (원)">
+          <input type="number" style={GS.inp} value={netPrice} onChange={e=>setNetPrice(e.target.value)} placeholder="예) 38000"/>
+        </MFR>
+        <MFR label="지인가 (원)">
+          <input type="number" style={GS.inp} value={friendPrice} onChange={e=>setFriendPrice(e.target.value)} placeholder="예) 35000"/>
+        </MFR>
+      </div>
+      <div style={{fontSize:10,color:"#64748b",marginTop:3}}>단품 매출 등록 시 단가 유형을 선택해서 자동계산</div>
+    </div>
     <div style={GS.fGrid}>
-      <MFR label="판매단가 (원)">
-        <input type="number" style={GS.inp} value={sellPrice} onChange={e=>setSellPrice(e.target.value)} placeholder="예) 45000"/>
-        <div style={{fontSize:10,color:"#64748b",marginTop:3}}>단품 매출 등록 시 자동계산</div>
-      </MFR>
       <MFR label="매입단가 (원)">
         <input type="number" style={GS.inp} value={costPrice} onChange={e=>setCostPrice(e.target.value)} placeholder="예) 28000"/>
         <div style={{fontSize:10,color:"#64748b",marginTop:3}}>수입원가 자동계산</div>
@@ -1968,7 +1985,7 @@ function UniformModal({onClose,onSave,initial}){
       </MFR>
     )}
     <div style={GS.mBtns}>
-      <SBtn onClick={()=>{if(!name.trim()||uploading)return;onSave({name,year,imgSrc,sizes,sellPrice:Number(sellPrice)||0,costPrice:Number(costPrice)||0});}} color={isEdit?"#10b981":"#3b82f6"} full disabled={uploading}>
+      <SBtn onClick={()=>{if(!name.trim()||uploading)return;onSave({name,year,imgSrc,sizes,agencyPrice:Number(agencyPrice)||0,shopPrice:Number(shopPrice)||0,netPrice:Number(netPrice)||0,friendPrice:Number(friendPrice)||0,costPrice:Number(costPrice)||0});}} color={isEdit?"#10b981":"#3b82f6"} full disabled={uploading}>
         {uploading?"⏳ 이미지 업로드 중...":(isEdit?"✅ 수정 완료":"등록")}
       </SBtn>
       <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
@@ -2030,14 +2047,21 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
     return rows.map(row => {
       const name = row["유니폼명"] || row["이름"] || row["name"] || "";
       const year = row["연도"] || row["year"] || String(new Date().getFullYear());
+      // 단가 컬럼 파싱
+      const PRICE_META = ["유니폼명","이름","name","연도","year","대리점가","용품점가","인터넷최저가","지인가","매입단가","agencyPrice","shopPrice","netPrice","friendPrice","costPrice"];
+      const agencyPrice  = Number(row["대리점가"]  || row["agencyPrice"]  || 0);
+      const shopPrice    = Number(row["용품점가"]  || row["shopPrice"]    || 0);
+      const netPrice     = Number(row["인터넷최저가"]|| row["netPrice"]    || 0);
+      const friendPrice  = Number(row["지인가"]    || row["friendPrice"]  || 0);
+      const costPrice    = Number(row["매입단가"]  || row["costPrice"]    || 0);
       // 나머지 컬럼은 사이즈로 처리
-      const sizeKeys = Object.keys(row).filter(k => !["유니폼명","이름","name","연도","year"].includes(k));
+      const sizeKeys = Object.keys(row).filter(k => !PRICE_META.includes(k));
       const sizes = {};
       sizeKeys.forEach(sz => {
         const v = Number(row[sz]);
         if(!isNaN(v) && v > 0) sizes[sz] = v;
       });
-      return { id: gid(), name, year, imgSrc: null, sizes };
+      return { id: gid(), name, year, imgSrc: null, sizes, agencyPrice, shopPrice, netPrice, friendPrice, costPrice };
     }).filter(u => u.name);
   }, [rows, type]);
 
@@ -2089,17 +2113,29 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
             <div style={{color:"#ef4444",fontSize:12,padding:8}}>⚠️ 파싱된 데이터가 없습니다. 템플릿 형식을 확인해주세요.</div>
           )}
           {type === "uniform" && parsedUniforms.map((u,i) => (
-            <div key={i} style={{background:"#1e293b",borderRadius:8,padding:"8px 12px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-              <div>
-                <div style={{fontWeight:600,fontSize:13}}>{u.name}</div>
-                <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{u.year}년도</div>
+            <div key={i} style={{background:"#1e293b",borderRadius:8,padding:"8px 12px"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                <div>
+                  <div style={{fontWeight:600,fontSize:13}}>{u.name}</div>
+                  <div style={{fontSize:11,color:"#64748b",marginTop:2}}>{u.year}년도</div>
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:4,justifyContent:"flex-end",maxWidth:"55%"}}>
+                  {Object.entries(u.sizes).map(([sz,v])=>(
+                    <span key={sz} style={{background:"#0b0f1a",border:"1px solid #334155",borderRadius:4,padding:"1px 6px",fontSize:10,color:"#94a3b8"}}>{sz}:{v}</span>
+                  ))}
+                  {Object.keys(u.sizes).length === 0 && <span style={{fontSize:11,color:"#475569"}}>수량 없음</span>}
+                </div>
               </div>
-              <div style={{display:"flex",flexWrap:"wrap",gap:4,justifyContent:"flex-end",maxWidth:"60%"}}>
-                {Object.entries(u.sizes).map(([sz,v])=>(
-                  <span key={sz} style={{background:"#0b0f1a",border:"1px solid #334155",borderRadius:4,padding:"1px 6px",fontSize:10,color:"#94a3b8"}}>{sz}:{v}</span>
-                ))}
-                {Object.keys(u.sizes).length === 0 && <span style={{fontSize:11,color:"#475569"}}>수량 없음</span>}
-              </div>
+              {/* 단가 정보 표시 */}
+              {(u.agencyPrice>0||u.shopPrice>0||u.netPrice>0||u.friendPrice>0||u.costPrice>0)&&(
+                <div style={{display:"flex",flexWrap:"wrap",gap:4,paddingTop:4,borderTop:"1px solid #334155"}}>
+                  {u.agencyPrice>0&&<span style={{fontSize:10,background:"rgba(59,130,246,0.15)",border:"1px solid #3b82f6",borderRadius:4,padding:"1px 6px",color:"#93c5fd"}}>대리점 {u.agencyPrice.toLocaleString()}원</span>}
+                  {u.shopPrice>0&&<span style={{fontSize:10,background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",borderRadius:4,padding:"1px 6px",color:"#fcd34d"}}>용품점 {u.shopPrice.toLocaleString()}원</span>}
+                  {u.netPrice>0&&<span style={{fontSize:10,background:"rgba(16,185,129,0.15)",border:"1px solid #10b981",borderRadius:4,padding:"1px 6px",color:"#6ee7b7"}}>인터넷 {u.netPrice.toLocaleString()}원</span>}
+                  {u.friendPrice>0&&<span style={{fontSize:10,background:"rgba(139,92,246,0.15)",border:"1px solid #8b5cf6",borderRadius:4,padding:"1px 6px",color:"#c4b5fd"}}>지인 {u.friendPrice.toLocaleString()}원</span>}
+                  {u.costPrice>0&&<span style={{fontSize:10,background:"rgba(100,116,139,0.15)",border:"1px solid #475569",borderRadius:4,padding:"1px 6px",color:"#94a3b8"}}>매입 {u.costPrice.toLocaleString()}원</span>}
+                </div>
+              )}
             </div>
           ))}
           {type === "equip" && parsedEquips.map((e,i) => (
@@ -2453,6 +2489,7 @@ function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
   // 단품: 사이즈 하나씩 선택
   const [selSize,setSelSize]=useState(initial?.selSize||"");
   const [selQty,setSelQty]=useState(initial?.selQty||1);
+  const [priceType,setPriceType]=useState(initial?.priceType||"shopPrice"); // 단가 유형
 
   const pickUni=(id)=>{
     setSelUniId(id);
@@ -2474,7 +2511,7 @@ function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
     setSelQty(safeQty);
 
     if(selUni && newSz){
-      const sp = Number(selUni.sellPrice||0);
+      const sp = Number(selUni[priceType]||0);
       const cp = Number(selUni.costPrice||0);
       if(sp>0) s("sales", sp * safeQty);
       if(cp>0) s("cost",  cp * safeQty);
@@ -2542,11 +2579,27 @@ function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
             }
             <div style={{flex:1}}>
               <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{selUni.name}</div>
-              <div style={{display:"flex",gap:10,marginTop:2}}>
-                {selUni.sellPrice>0&&<span style={{fontSize:11,color:"#f59e0b"}}>판매단가 {won(selUni.sellPrice)}</span>}
-                {selUni.costPrice>0&&<span style={{fontSize:11,color:"#64748b"}}>매입단가 {won(selUni.costPrice)}</span>}
-                {!selUni.sellPrice&&!selUni.costPrice&&<span style={{fontSize:11,color:"#ef4444"}}>⚠ 재고관리에서 단가를 입력해주세요</span>}
+              {/* 단가 유형 선택 탭 */}
+              <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
+                {[["agencyPrice","대리점가"],["shopPrice","용품점가"],["netPrice","인터넷최저가"],["friendPrice","지인가"]].map(([key,label])=>{
+                  const price=Number(selUni[key]||0);
+                  const isActive=priceType===key;
+                  return <button key={key} onClick={()=>{
+                    setPriceType(key);
+                    const sp=price; const cp=Number(selUni.costPrice||0);
+                    if(sp>0&&selSize){ s("sales",sp*selQty); if(cp>0)s("cost",cp*selQty); }
+                  }} style={{
+                    padding:"3px 8px",borderRadius:6,fontSize:10,cursor:"pointer",
+                    border:`1px solid ${isActive?"#f59e0b":price>0?"#334155":"#1e293b"}`,
+                    background:isActive?"rgba(245,158,11,0.15)":price>0?"#1e293b":"#0b0f1a",
+                    color:isActive?"#fcd34d":price>0?"#94a3b8":"#374151",fontWeight:isActive?700:400,
+                  }}>
+                    {label}{price>0?` ${won(price)}`:" —"}
+                  </button>;
+                })}
               </div>
+              {!["agencyPrice","shopPrice","netPrice","friendPrice"].some(k=>selUni[k]>0)&&
+                <span style={{fontSize:10,color:"#ef4444",display:"block",marginTop:4}}>⚠ 재고관리에서 단가를 입력해주세요</span>}
             </div>
           </div>
 
@@ -2597,20 +2650,25 @@ function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
           )}
 
           {/* 자동계산 결과 미리보기 */}
-          {selSize && selUni.sellPrice>0 && (
-            <div style={{marginTop:10,background:"#0f172a",borderRadius:7,padding:"8px 12px",border:"1px solid #1e3a5f"}}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
-                <span style={{fontSize:11,color:"#64748b"}}>매출액 ({won(selUni.sellPrice)} × {selQty}벌)</span>
-                <span style={{fontWeight:700,color:"#f59e0b",fontSize:13}}>{won(Number(selUni.sellPrice)*selQty)}</span>
-              </div>
-              {selUni.costPrice>0&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
-                <span style={{fontSize:11,color:"#64748b"}}>수입원가 ({won(selUni.costPrice)} × {selQty}벌)</span>
-                <span style={{fontWeight:700,color:"#94a3b8",fontSize:13}}>{won(Number(selUni.costPrice)*selQty)}</span>
-              </div>}
-              {selUni.costPrice>0&&<div style={{display:"flex",justifyContent:"space-between",paddingTop:5,borderTop:"1px solid #1e293b"}}>
-                <span style={{fontSize:11,color:"#64748b"}}>예상 순이익</span>
-                <span style={{fontWeight:700,color:"#10b981",fontSize:13}}>{won((Number(selUni.sellPrice)-Number(selUni.costPrice))*selQty)}</span>
-              </div>}
+          {selSize && Number(selUni[priceType]||0)>0 && (
+            <div style={{marginTop:10,background:"#0f172a",borderRadius:7,padding:"8px 12px",border:"1px solid #1e3a5f"}}>{(()=>{
+              const sp=Number(selUni[priceType]||0); const cp=Number(selUni.costPrice||0);
+              const ptLabel={agencyPrice:"대리점가",shopPrice:"용품점가",netPrice:"인터넷최저가",friendPrice:"지인가"}[priceType];
+              return <>
+                <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                  <span style={{fontSize:11,color:"#64748b"}}>매출액 ({ptLabel} {won(sp)} × {selQty}벌)</span>
+                  <span style={{fontWeight:700,color:"#f59e0b",fontSize:13}}>{won(sp*selQty)}</span>
+                </div>
+                {cp>0&&<div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
+                  <span style={{fontSize:11,color:"#64748b"}}>수입원가 ({won(cp)} × {selQty}벌)</span>
+                  <span style={{fontWeight:700,color:"#94a3b8",fontSize:13}}>{won(cp*selQty)}</span>
+                </div>}
+                {cp>0&&<div style={{display:"flex",justifyContent:"space-between",paddingTop:5,borderTop:"1px solid #1e293b"}}>
+                  <span style={{fontSize:11,color:"#64748b"}}>예상 순이익</span>
+                  <span style={{fontWeight:700,color:"#10b981",fontSize:13}}>{won((sp-cp)*selQty)}</span>
+                </div>}
+              </>;
+            })()}
             </div>
           )}
         </div>
