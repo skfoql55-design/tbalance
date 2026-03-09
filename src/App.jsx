@@ -696,6 +696,7 @@ function DesignTool() {
   const [selLib, setSelLib]   = useState("");    // 드롭다운 선택값
   const [libDrag, setLibDrag] = useState(false); // 라이브러리 드래그오버
   const [upProg, setUpProg]   = useState(null);  // {current,total,name} 업로드 진행상태
+  const [fontProg, setFontProg] = useState(null); // {current,total,name,pct} 폰트 업로드 진행
   const [layers, setLayers]   = useState([]);
   const [sel, setSel]         = useState(null);
   const [fonts, setFonts]       = useState(BUILTIN_FONTS);
@@ -723,16 +724,25 @@ function DesignTool() {
       if(lib?.length) setLib(lib);
     }catch(e){ console.error("라이브러리 로드 실패",e); }
     finally{ libLoadedRef.current=true; }
-    // ── 커스텀 폰트 로드 (Firebase Storage URL → FontFace 복원)
+    // ── 커스텀 폰트 복원: IndexedDB 우선(빠름/CORS없음), 없으면 Firebase URL fallback
     try{
       const saved = await ld("ds:__fonts",[]);
       if(saved?.length){
         const loaded=[];
         for(const f of saved){
           try{
-            const res=await fetch(f.url);
-            const buf=await res.arrayBuffer();
-            const ff=new FontFace(f.name, buf, {weight:f.weight||"400"});
+            // 1) IndexedDB 캐시에서 ArrayBuffer 읽기
+            let buf = await idbGet("font:"+f.name);
+            // 2) 없으면 Firebase Storage URL로 fetch (다른 컴퓨터)
+            if(!buf && f.url){
+              try{
+                const res = await fetch(f.url);
+                buf = await res.arrayBuffer();
+                await idbSet("font:"+f.name, buf); // 로컬에 캐시
+              }catch(fe){ console.warn("폰트 URL fetch 실패:",f.name,fe); }
+            }
+            if(!buf) continue;
+            const ff = new FontFace(f.name, buf, {weight:f.weight||"400"});
             await ff.load();
             document.fonts.add(ff);
             loaded.push(f);
@@ -820,34 +830,50 @@ const addLogo = (file) => {
       }; img.src=e.target.result;
     }; r.readAsDataURL(file);
   };
-  const loadFont = async(file) => {
-    if(!file) return;
-    const name = file.name.replace(/\.[^/.]+$/,"");
-    toast("폰트 업로드 중...", true);
-    try{
-      // FontFace로 즉시 적용
-      const buf = await file.arrayBuffer();
-      const ff  = new FontFace(name, buf, {weight:"400"});
-      await ff.load();
-      document.fonts.add(ff);
-      // Firebase Storage에 업로드 → URL 획득
-      let url = "";
+  // ── 폰트 다중 등록: IndexedDB(로컬캐시) + Firebase Storage(다른기기) + 로딩바
+  const loadFonts = async(files) => {
+    const arr = Array.from(files).filter(f=>/\.(ttf|otf|woff|woff2)$/i.test(f.name));
+    if(!arr.length) return;
+    fontLoadedRef.current = true; // 로드 전에 true로 설정해 저장 useEffect 활성화
+    const total = arr.length;
+    let successCount = 0;
+    const newFonts = [];
+    for(let i=0; i<arr.length; i++){
+      const file = arr[i];
+      const name = file.name.replace(/\.[^/.]+$/,"");
+      setFontProg({current:i+1, total, name, pct:0});
       try{
-        const storageRef = ref(storage, `fonts/${name}_${Date.now()}.${file.name.split(".").pop()}`);
-        await uploadBytes(storageRef, file);
-        url = await getDownloadURL(storageRef);
-      }catch(e){ console.warn("폰트 Storage 업로드 실패, 로컬만 사용:",e); }
-      // fontLoadedRef 강제 true (로드 완료 전에 setFonts 트리거 방지)
-      fontLoadedRef.current = true;
-      setFonts(p=>{
-        if(p.some(f=>f.name===name)) return p; // 중복 방지
-        return [...p, {name, value:name, weight:"400", url}];
-      });
-      toast(`폰트 "${name}" 등록 완료!${url?" ☁️ 저장됨":" (이 기기만)"}`);
-    }catch(e){
-      console.error("폰트 로드 실패:",e);
-      toast("폰트 로드 실패", false);
+        // 1) ArrayBuffer 읽기
+        const buf = await file.arrayBuffer();
+        // 2) IndexedDB에 바이너리 저장 (새로고침 복원용 - CORS 없음)
+        await idbSet("font:"+name, buf);
+        // 3) FontFace 즉시 적용
+        const ff = new FontFace(name, buf, {weight:"400"});
+        await ff.load();
+        document.fonts.add(ff);
+        setFontProg({current:i+1, total, name, pct:60});
+        // 4) Firebase Storage 업로드 (다른 기기 공유용)
+        let url = "";
+        try{
+          const sRef = ref(storage, `fonts/${name}_${Date.now()}.${file.name.split(".").pop()}`);
+          await uploadBytes(sRef, file);
+          url = await getDownloadURL(sRef);
+          setFontProg({current:i+1, total, name, pct:100});
+        }catch(e){ console.warn("폰트 Firebase 업로드 실패 (로컬은 유지됨):",e); }
+        newFonts.push({name, value:name, weight:"400", url});
+        successCount++;
+      }catch(e){
+        console.error("폰트 로드 실패:",file.name,e);
+      }
     }
+    setFontProg(null);
+    if(!newFonts.length){ toast("폰트 등록 실패", false); return; }
+    setFonts(prev=>{
+      const existing = new Set(prev.map(f=>f.name));
+      const added = newFonts.filter(f=>!existing.has(f.name));
+      return [...prev, ...added];
+    });
+    toast(`폰트 ${successCount}개 등록 완료!${newFonts.some(f=>f.url)?" ☁️":" 💾"}`);
   };
 
   const onLayerMD = (e,id,mode="move") => {
@@ -1003,18 +1029,43 @@ const addLogo = (file) => {
           const customFonts  = fonts.filter(f=>!builtinNames.has(f.name));
           const removeFont   = async(fname) => {
             const item = fonts.find(x=>x.name===fname);
+            // Firebase Storage 삭제
             if(item?.url?.startsWith("https://")){
               try{
                 const sRef=ref(storage,decodeURIComponent(item.url.split("/o/")[1]?.split("?")[0]||""));
                 await deleteObject(sRef);
               }catch{}
             }
+            // IndexedDB 캐시 삭제
+            try{ await idbDel("font:"+fname); }catch{}
             setFonts(p=>p.filter(x=>x.name!==fname));
           };
           return (
             <Sec title="🔤 폰트">
-              <input type="file" accept=".ttf,.otf,.woff,.woff2" ref={fnRef} style={{display:"none"}} onChange={e=>loadFont(e.target.files[0])} />
-              <SBtn full onClick={()=>fnRef.current.click()}>📂 폰트 불러오기</SBtn>
+              <input type="file" accept=".ttf,.otf,.woff,.woff2" ref={fnRef} style={{display:"none"}} multiple onChange={e=>loadFonts(e.target.files)} />
+              <SBtn full onClick={()=>fnRef.current.click()} disabled={!!fontProg}>
+                {fontProg ? `⏳ 폰트 등록 중... (${fontProg.current}/${fontProg.total})` : "📂 폰트 불러오기"}
+              </SBtn>
+              {/* 폰트 업로드 로딩바 */}
+              {fontProg&&(
+                <div style={{marginTop:6,background:"#0f172a",borderRadius:7,padding:"8px 10px",border:"1px solid #1e3a5f"}}>
+                  <div style={{fontSize:10,color:"#93c5fd",marginBottom:4,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    📝 {fontProg.name}
+                  </div>
+                  <div style={{background:"#1e293b",borderRadius:4,height:6,overflow:"hidden"}}>
+                    <div style={{
+                      height:"100%",borderRadius:4,transition:"width 0.3s ease",
+                      width:`${fontProg.pct||0}%`,
+                      background:"linear-gradient(90deg,#3b82f6,#8b5cf6)",
+                      boxShadow:"0 0 6px #3b82f6aa"
+                    }}/>
+                  </div>
+                  <div style={{display:"flex",justifyContent:"space-between",marginTop:3}}>
+                    <span style={{fontSize:9,color:"#475569"}}>{fontProg.current}/{fontProg.total}개 처리 중</span>
+                    <span style={{fontSize:9,color:"#3b82f6"}}>{fontProg.pct||0}%</span>
+                  </div>
+                </div>
+              )}
               {customFonts.length>0&&(
                 <div style={{marginTop:6,display:"flex",flexDirection:"column",gap:3}}>
                   <div style={{fontSize:10,color:"#64748b",marginBottom:2}}>등록된 폰트 ({customFonts.length}개)</div>
