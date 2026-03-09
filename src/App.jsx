@@ -822,8 +822,8 @@ function DesignTool() {
       color:"#ffffff", strokeColor:"#000000", strokeWidth:0,
       italic:false, letterSpacing:0, textAlign:"center", scaleX:1 };
     setLayers(p=>[...p,
-      {...base, id:id1, text:"홍길동",    fontSize:22, y:115},
-      {...base, id:id2, text:"YU NA RAE", fontSize:18, y:149},
+      {...base, id:id1, text:"홍길동",    fontSize:25, y:115},
+      {...base, id:id2, text:"YU NA RAE", fontSize:25, y:149},
     ]);
     setSel(id1); setRTab("props");
     toast("등판 2줄 레이아웃 추가!");
