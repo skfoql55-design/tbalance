@@ -1076,14 +1076,51 @@ const addLogo = (file) => {
                 <FRow label="크기"><input type="number" style={SI.inp} min={8} max={200} value={selL.fontSize} onChange={e=>upd(sel,{fontSize:Number(e.target.value)})} /></FRow>
                 <FRow label="자간"><input type="number" style={SI.inp} min={-10} max={30} value={selL.letterSpacing||0} onChange={e=>upd(sel,{letterSpacing:Number(e.target.value)})} /></FRow>
               </div>
+              <FRow label="가로 비율">
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  <input type="range" min={30} max={200} step={1} style={{flex:1,accentColor:"#3b82f6"}}
+                    value={Math.round((selL.scaleX||1)*100)}
+                    onChange={e=>upd(sel,{scaleX:Number(e.target.value)/100})} />
+                  <span style={{fontSize:11,color:"#f59e0b",minWidth:34,textAlign:"right",fontWeight:600}}>
+                    {Math.round((selL.scaleX||1)*100)}%
+                  </span>
+                </div>
+                <div style={{display:"flex",gap:4,marginTop:4}}>
+                  {[50,75,100,125,150].map(v=>(
+                    <div key={v} onClick={()=>upd(sel,{scaleX:v/100})}
+                      style={{...SI.chip,padding:"2px 6px",fontSize:10,
+                        ...(Math.round((selL.scaleX||1)*100)===v?SI.chipA:{})}}>
+                      {v}%
+                    </div>
+                  ))}
+                </div>
+              </FRow>
               <FRow label="색상">
                 <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:4}}>{COLORS.map(c=><div key={c} onClick={()=>upd(sel,{color:c})} style={{width:20,height:20,borderRadius:3,background:c,cursor:"pointer",border:selL.color===c?"2px solid #3b82f6":"2px solid transparent"}} />)}</div>
                 <input type="color" style={{...SI.inp,height:28}} value={selL.color} onChange={e=>upd(sel,{color:e.target.value})} />
               </FRow>
               <FRow label="외곽선">
-                <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:4}}>{COLORS.map(c=><div key={c} onClick={()=>upd(sel,{strokeColor:c})} style={{width:20,height:20,borderRadius:3,background:c,cursor:"pointer",border:selL.strokeColor===c?"2px solid #3b82f6":"2px solid transparent"}} />)}</div>
-                <input type="color" style={{...SI.inp,height:28}} value={selL.strokeColor} onChange={e=>upd(sel,{strokeColor:e.target.value})} />
-                <input type="range" min={0} max={10} step={0.5} style={{width:"100%",accentColor:"#3b82f6",marginTop:4}} value={selL.strokeWidth} onChange={e=>upd(sel,{strokeWidth:Number(e.target.value)})} />
+                {/* 없음 버튼 */}
+                <div style={{marginBottom:4}}>
+                  <div onClick={()=>upd(sel,{strokeWidth:0})}
+                    style={{display:"inline-flex",alignItems:"center",gap:4,padding:"2px 10px",borderRadius:5,fontSize:11,cursor:"pointer",
+                      background:selL.strokeWidth===0?"#1d4ed8":"#1e293b",
+                      border:selL.strokeWidth===0?"1px solid #3b82f6":"1px solid #334155",
+                      color:selL.strokeWidth===0?"white":"#94a3b8",fontWeight:selL.strokeWidth===0?700:400}}>
+                    없음
+                  </div>
+                </div>
+                <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:4,opacity:selL.strokeWidth===0?0.35:1}}>
+                  {COLORS.map(c=><div key={c} onClick={()=>upd(sel,{strokeColor:c,strokeWidth:selL.strokeWidth===0?2:selL.strokeWidth})}
+                    style={{width:20,height:20,borderRadius:3,background:c,cursor:"pointer",border:selL.strokeColor===c?"2px solid #3b82f6":"2px solid transparent"}} />)}
+                </div>
+                <input type="color" style={{...SI.inp,height:28,opacity:selL.strokeWidth===0?0.35:1}}
+                  value={selL.strokeColor} onChange={e=>upd(sel,{strokeColor:e.target.value,strokeWidth:selL.strokeWidth===0?2:selL.strokeWidth})} />
+                <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4}}>
+                  <input type="range" min={0} max={10} step={0.5} style={{flex:1,accentColor:"#3b82f6"}}
+                    value={selL.strokeWidth} onChange={e=>upd(sel,{strokeWidth:Number(e.target.value)})} />
+                  <span style={{fontSize:10,color:"#64748b",minWidth:20,textAlign:"right"}}>{selL.strokeWidth}</span>
+                </div>
               </FRow>
               <FRow label="정렬">
                 <div style={{display:"flex",gap:5}}>
@@ -1141,7 +1178,9 @@ const addLogo = (file) => {
 }
 function TextLayerEl({layer,sel,onMD,onClick}){
   const t={left:"translateX(0)",center:"translateX(-50%)",right:"translateX(-100%)"}[layer.textAlign||"center"];
-  return <div onMouseDown={onMD} onClick={onClick} style={{position:"absolute",left:layer.x,top:layer.y,transform:t,cursor:"move",userSelect:"none",outline:sel?"2px solid #3b82f6":"2px solid transparent",outlineOffset:3,borderRadius:2,padding:"0 2px",whiteSpace:"nowrap",fontSize:layer.fontSize,fontFamily:layer.fontFamily,fontWeight:layer.fontWeight||"bold",fontStyle:layer.italic?"italic":"normal",color:layer.color,letterSpacing:(layer.letterSpacing||0)+"px",WebkitTextStroke:layer.strokeWidth>0?`${layer.strokeWidth}px ${layer.strokeColor}`:"none",paintOrder:"stroke fill",lineHeight:1.1}}>
+  const sx = layer.scaleX||1;
+  const transformStr = `${t} scaleX(${sx})`;
+  return <div onMouseDown={onMD} onClick={onClick} style={{position:"absolute",left:layer.x,top:layer.y,transform:transformStr,cursor:"move",userSelect:"none",outline:sel?"2px solid #3b82f6":"2px solid transparent",outlineOffset:3,borderRadius:2,padding:"0 2px",whiteSpace:"nowrap",fontSize:layer.fontSize,fontFamily:layer.fontFamily,fontWeight:layer.fontWeight||"bold",fontStyle:layer.italic?"italic":"normal",color:layer.color,letterSpacing:(layer.letterSpacing||0)+"px",WebkitTextStroke:layer.strokeWidth>0?`${layer.strokeWidth}px ${layer.strokeColor}`:"none",paintOrder:"stroke fill",lineHeight:1.1}}>
     {layer.text}{sel&&<Handles/>}
   </div>;
 }
