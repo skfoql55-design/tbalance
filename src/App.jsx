@@ -698,7 +698,8 @@ function DesignTool() {
   const [upProg, setUpProg]   = useState(null);  // {current,total,name} 업로드 진행상태
   const [fontProg, setFontProg] = useState(null); // {current,total,name,pct} 폰트 업로드 진행
   const [layers, setLayers]   = useState([]);
-  const [sel, setSel]         = useState(null);
+  const [sel, setSel]         = useState(null);      // 속성 탭 표시용 (마지막 선택)
+  const [selIds, setSelIds]   = useState(new Set()); // 멀티셀렉트용 Set
   const [fonts, setFonts]       = useState(BUILTIN_FONTS);
   const fontLoadedRef           = useRef(false); // 폰트 초기 로드 여부
   const [custName, setCN]     = useState("");
@@ -815,8 +816,8 @@ function DesignTool() {
       color:"#ffffff", strokeColor:"#000000", strokeWidth:0,
       italic:false, letterSpacing:0, textAlign:"center", scaleX:1 };
     setLayers(p=>[...p,
-      {...base, id:id1, text:"홍길동",    fontSize:22, y:BACK_Y-16},
-      {...base, id:id2, text:"YU NA RAE", fontSize:18, y:BACK_Y+14},
+      {...base, id:id1, text:"홍길동",    fontSize:22, y:115},
+      {...base, id:id2, text:"YU NA RAE", fontSize:18, y:149},
     ]);
     setSel(id1); setRTab("props");
     toast("등판 2줄 레이아웃 추가!");
@@ -939,19 +940,66 @@ const addLogo = (file) => {
   };
 
   const onLayerMD = (e,id,mode="move") => {
-    e.preventDefault(); e.stopPropagation(); setSel(id);
-    const layer=layers.find(l=>l.id===id); const rect=prevRef.current.getBoundingClientRect();
-    dragRef.current={ id,mode,sx:e.clientX-rect.left,sy:e.clientY-rect.top,ox:layer.x,oy:layer.y,ow:layer.width||0,oh:layer.height||0 };
+    e.preventDefault(); e.stopPropagation();
+    const isShift = e.shiftKey;
+    // Shift+클릭: 멀티셀렉트 토글
+    if(isShift){
+      setSelIds(prev=>{
+        const next = new Set(prev);
+        if(next.has(id)) next.delete(id); else next.add(id);
+        return next;
+      });
+      setSel(id);
+    } else {
+      // 일반 클릭: 기존 선택이 이 레이어 하나면 유지, 아니면 단일 선택
+      setSelIds(new Set([id]));
+      setSel(id);
+    }
+    const layer=layers.find(l=>l.id===id);
+    const rect=prevRef.current.getBoundingClientRect();
+    // 드래그 시작: 멀티셀렉트된 모든 레이어의 초기 위치 저장
+    const currentIds = e.shiftKey
+      ? (() => { const s = new Set([id]); return s; })() // 실제 최신 selIds는 setState 비동기라 직접 계산
+      : new Set([id]);
+    // 멀티드래그: selIds에 현재 id 포함 여부에 따라 전체 or 단일
+    dragRef.current={
+      id, mode,
+      shiftLock: isShift, // Shift 누른 상태면 X축 고정
+      sx:e.clientX-rect.left, sy:e.clientY-rect.top,
+      ox:layer.x, oy:layer.y, ow:layer.width||0, oh:layer.height||0,
+    };
   };
   const onMM = useCallback((e) => {
     if(!dragRef.current||!prevRef.current)return;
     const rect=prevRef.current.getBoundingClientRect();
-    const cx=e.clientX-rect.left,cy=e.clientY-rect.top;
-    const dx=cx-dragRef.current.sx,dy=cy-dragRef.current.sy;
-    if(dragRef.current.mode==="move") upd(dragRef.current.id,{x:dragRef.current.ox+dx,y:dragRef.current.oy+dy});
-    else upd(dragRef.current.id,{width:Math.max(30,dragRef.current.ow+dx),height:Math.max(30,dragRef.current.oh+dy)});
+    const cx=e.clientX-rect.left, cy=e.clientY-rect.top;
+    const dx=cx-dragRef.current.sx, dy=cy-dragRef.current.sy;
+    const shiftNow = e.shiftKey || dragRef.current.shiftLock;
+    if(dragRef.current.mode==="resize"){
+      upd(dragRef.current.id,{width:Math.max(30,dragRef.current.ow+dx),height:Math.max(30,dragRef.current.oh+dy)});
+      return;
+    }
+    // move 모드
+    setSelIds(prev=>{
+      const ids = prev.size > 0 ? prev : new Set([dragRef.current.id]);
+      setLayers(ls=>ls.map(l=>{
+        if(!ids.has(l.id)) return l;
+        // 드래그 기준 레이어의 초기 위치 대비 상대 오프셋 계산
+        const baseOx = l.id===dragRef.current.id
+          ? dragRef.current.ox
+          : (dragRef.current.multiOrigins?.[l.id]?.ox ?? l.x);
+        const baseOy = l.id===dragRef.current.id
+          ? dragRef.current.oy
+          : (dragRef.current.multiOrigins?.[l.id]?.oy ?? l.y);
+        // Shift: X 고정, Y만 이동
+        return shiftNow
+          ? {...l, y: baseOy+dy}
+          : {...l, x: baseOx+dx, y: baseOy+dy};
+      }));
+      return prev;
+    });
   },[]);
-  const onMU = useCallback(()=>{ dragRef.current=null; },[]);
+  const onMU = useCallback(()=>{ if(dragRef.current){ dragRef.current.multiOrigins={}; } dragRef.current=null; },[]);
   useEffect(()=>{ window.addEventListener("mousemove",onMM); window.addEventListener("mouseup",onMU); return()=>{ window.removeEventListener("mousemove",onMM); window.removeEventListener("mouseup",onMU); }; },[onMM,onMU]);
 
   const renderCanvas = async(scale=2) => {
@@ -1166,13 +1214,13 @@ const addLogo = (file) => {
           <SBtn onClick={download} color="#10b981">⬇ 다운로드</SBtn>
           <SBtn onClick={copy} color="#8b5cf6">📋 복사</SBtn>
         </div>
-        <div ref={prevRef} style={{...D.preview,...(drag?{border:"2px dashed #3b82f6"}:{})}} onClick={()=>setSel(null)}
+        <div ref={prevRef} style={{...D.preview,...(drag?{border:"2px dashed #3b82f6"}:{})}} onClick={()=>{setSel(null);setSelIds(new Set());}}
           onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)}
           onDrop={e=>{e.preventDefault();setDrag(false);const f=e.dataTransfer.files[0];if(f?.type.startsWith("image/")){const r=new FileReader();r.onload=ev=>setMockup(ev.target.result);r.readAsDataURL(f);}}}>
           {mockup ? <img src={mockup} style={{width:"100%",height:"100%",objectFit:"cover",userSelect:"none",pointerEvents:"none"}} alt="" draggable={false} /> : <div style={D.drop}>🖼 목업 이미지를 드래그하거나 좌측에서 등록</div>}
           {layers.map(l=>l.type==="text"
-            ? <TextLayerEl key={l.id} layer={l} sel={sel===l.id} onMD={e=>onLayerMD(e,l.id)} onClick={e=>{e.stopPropagation();setSel(l.id);setRTab("props");}} />
-            : <LogoLayerEl key={l.id} layer={l} sel={sel===l.id} onMD={e=>onLayerMD(e,l.id)} onRMD={e=>onLayerMD(e,l.id,"resize")} onClick={e=>{e.stopPropagation();setSel(l.id);setRTab("props");}} />
+            ? <TextLayerEl key={l.id} layer={l} sel={selIds.has(l.id)||sel===l.id} onMD={e=>onLayerMD(e,l.id)} onClick={e=>{e.stopPropagation();if(e.shiftKey){setSelIds(p=>{const n=new Set(p);n.has(l.id)?n.delete(l.id):n.add(l.id);return n;});}else{setSelIds(new Set([l.id]));}setSel(l.id);setRTab("props");}} />
+            : <LogoLayerEl key={l.id} layer={l} sel={selIds.has(l.id)||sel===l.id} onMD={e=>onLayerMD(e,l.id)} onRMD={e=>onLayerMD(e,l.id,"resize")} onClick={e=>{e.stopPropagation();if(e.shiftKey){setSelIds(p=>{const n=new Set(p);n.has(l.id)?n.delete(l.id):n.add(l.id);return n;});}else{setSelIds(new Set([l.id]));}setSel(l.id);setRTab("props");}} />
           )}
         </div>
       </div>
