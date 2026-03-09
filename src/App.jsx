@@ -1406,7 +1406,7 @@ function TextLayerEl({layer,sel,onMD,onClick}){
   const t={left:"translateX(0)",center:"translateX(-50%)",right:"translateX(-100%)"}[layer.textAlign||"center"];
   const sx = layer.scaleX||1;
   const transformStr = `${t} scaleX(${sx})`;
-  return <div onMouseDown={onMD} onClick={onClick} style={{position:"absolute",left:layer.x,top:layer.y,transform:transformStr,cursor:"move",userSelect:"none",outline:sel?"2px solid #3b82f6":"2px solid transparent",outlineOffset:3,borderRadius:2,padding:"0 2px",whiteSpace:"nowrap",fontSize:layer.fontSize,fontFamily:layer.fontFamily,fontWeight:layer.fontWeight||"bold",fontStyle:layer.italic?"italic":"normal",color:layer.color,letterSpacing:(layer.letterSpacing||0)+"px",WebkitTextStroke:layer.strokeWidth>0?`${layer.strokeWidth}px ${layer.strokeColor}`:"0px transparent",paintOrder:"stroke fill",lineHeight:1.1}}>
+  return <div onMouseDown={onMD} onClick={onClick} style={{position:"absolute",left:layer.x,top:layer.y,transform:transformStr,cursor:"move",userSelect:"none",outline:sel?"2px solid #3b82f6":"2px solid transparent",outlineOffset:3,borderRadius:2,padding:"0 2px",whiteSpace:"pre",fontSize:layer.fontSize,fontFamily:layer.fontFamily,fontWeight:layer.fontWeight||"bold",fontStyle:layer.italic?"italic":"normal",color:layer.color,letterSpacing:(layer.letterSpacing||0)+"px",WebkitTextStroke:layer.strokeWidth>0?`${layer.strokeWidth}px ${layer.strokeColor}`:"0px transparent",paintOrder:"stroke fill",lineHeight:1.1}}>
     {layer.text}{sel&&<Handles/>}
   </div>;
 }
