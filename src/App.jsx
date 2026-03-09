@@ -781,9 +781,9 @@ function DesignTool() {
 
   // ── 등판 레이아웃 템플릿 ──
   // 캔버스(720×450) 기준: 등판 중심 x≈540(오른쪽 패널 중앙), y≈265
-  // 이미지 기준: 등판 텍스트 중앙 위치 (캔버스 720x450)
+  // 이미지 기준: 등판 텍스트 위치 (캔버스 720x450)
   const BACK_X = Math.round(PW * 0.755); // 544 — 오른쪽 패널 중앙
-  const BACK_Y = Math.round(PH * 0.420); // 189 — 등판 중상단
+  const BACK_Y = Math.round(PH * 0.300); // 135 — 등판 상단 (이미지2 기준)
 
   // 현재 폰트 목록에서 사용할 폰트 결정 (커스텀 폰트 우선, 없으면 빌트인 마지막)
   const getActiveFont = () => {
@@ -1253,6 +1253,33 @@ const addLogo = (file) => {
               <div style={{display:"flex",gap:5}}>
                 <div style={{...SI.chip,...(selL.italic?SI.chipA:{})}} onClick={()=>upd(sel,{italic:!selL.italic})}>이탤릭</div>
               </div>
+              {/* ── X/Y 좌표 조정 ── */}
+              <FRow label="위치 (X / Y)">
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+                  <div>
+                    <div style={{fontSize:9,color:"#64748b",marginBottom:2}}>X (좌우)</div>
+                    <div style={{display:"flex",alignItems:"center",gap:3}}>
+                      <button onClick={()=>upd(sel,{x:Math.round(selL.x-1)})}
+                        style={{width:20,height:24,background:"#1e293b",border:"1px solid #334155",color:"#94a3b8",borderRadius:4,cursor:"pointer",fontSize:12,lineHeight:1,flexShrink:0}}>‹</button>
+                      <input type="number" style={{...SI.inp,textAlign:"center",padding:"3px 2px",fontSize:11}}
+                        value={Math.round(selL.x)} onChange={e=>upd(sel,{x:Number(e.target.value)})}/>
+                      <button onClick={()=>upd(sel,{x:Math.round(selL.x+1)})}
+                        style={{width:20,height:24,background:"#1e293b",border:"1px solid #334155",color:"#94a3b8",borderRadius:4,cursor:"pointer",fontSize:12,lineHeight:1,flexShrink:0}}>›</button>
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:9,color:"#64748b",marginBottom:2}}>Y (상하)</div>
+                    <div style={{display:"flex",alignItems:"center",gap:3}}>
+                      <button onClick={()=>upd(sel,{y:Math.round(selL.y-1)})}
+                        style={{width:20,height:24,background:"#1e293b",border:"1px solid #334155",color:"#94a3b8",borderRadius:4,cursor:"pointer",fontSize:12,lineHeight:1,flexShrink:0}}>‹</button>
+                      <input type="number" style={{...SI.inp,textAlign:"center",padding:"3px 2px",fontSize:11}}
+                        value={Math.round(selL.y)} onChange={e=>upd(sel,{y:Number(e.target.value)})}/>
+                      <button onClick={()=>upd(sel,{y:Math.round(selL.y+1)})}
+                        style={{width:20,height:24,background:"#1e293b",border:"1px solid #334155",color:"#94a3b8",borderRadius:4,cursor:"pointer",fontSize:12,lineHeight:1,flexShrink:0}}>›</button>
+                    </div>
+                  </div>
+                </div>
+              </FRow>
               <SBtn full onClick={()=>delLayer(sel)} color="#7f1d1d">🗑 삭제</SBtn>
             </div>
           )}
