@@ -781,8 +781,9 @@ function DesignTool() {
 
   // ── 등판 레이아웃 템플릿 ──
   // 캔버스(720×450) 기준: 등판 중심 x≈540(오른쪽 패널 중앙), y≈265
-  const BACK_X = Math.round(PW * 0.755); // 544
-  const BACK_Y = Math.round(PH * 0.585); // 263
+  // 이미지 기준: 등판 텍스트 중앙 위치 (캔버스 720x450)
+  const BACK_X = Math.round(PW * 0.755); // 544 — 오른쪽 패널 중앙
+  const BACK_Y = Math.round(PH * 0.420); // 189 — 등판 중상단
 
   // 현재 폰트 목록에서 사용할 폰트 결정 (커스텀 폰트 우선, 없으면 빌트인 마지막)
   const getActiveFont = () => {
@@ -797,11 +798,11 @@ function DesignTool() {
     const id = nid();
     const {family, weight} = getActiveFont();
     setLayers(p=>[...p,{
-      id, type:"text", text:"영문명",
+      id, type:"text", text:"YU NA RAE",
       x:BACK_X, y:BACK_Y,
       fontSize:25, fontFamily:family, fontWeight:weight,
       color:"#ffffff", strokeColor:"#000000", strokeWidth:0,
-      italic:false, letterSpacing:2, textAlign:"center", scaleX:1,
+      italic:false, letterSpacing:0, textAlign:"center", scaleX:1,
     }]);
     setSel(id); setRTab("props");
   };
@@ -810,14 +811,14 @@ function DesignTool() {
   const addBackPanel2 = () => {
     const id1=nid(), id2=nid();
     const {family, weight} = getActiveFont();
-    const base = { type:"text", x:BACK_X, fontSize:22, fontFamily:family, fontWeight:weight,
+    const base = { type:"text", x:BACK_X, fontFamily:family, fontWeight:weight,
       color:"#ffffff", strokeColor:"#000000", strokeWidth:0,
-      italic:false, letterSpacing:2, textAlign:"center", scaleX:1 };
+      italic:false, letterSpacing:0, textAlign:"center", scaleX:1 };
     setLayers(p=>[...p,
-      {...base, id:id1, text:"한글명",  y:BACK_Y-20},
-      {...base, id:id2, text:"영문명",  y:BACK_Y+18, fontSize:18},
+      {...base, id:id1, text:"홍길동",    fontSize:22, y:BACK_Y-16},
+      {...base, id:id2, text:"YU NA RAE", fontSize:18, y:BACK_Y+14},
     ]);
-    setSel(id2); setRTab("props");
+    setSel(id1); setRTab("props");
     toast("등판 2줄 레이아웃 추가!");
   };
 
@@ -827,10 +828,10 @@ function DesignTool() {
     const {family, weight} = getActiveFont();
     setLayers(p=>[...p,{
       id, type:"text", text:"SPONSOR",
-      x:BACK_X, y:Math.round(PH*0.38),
+      x:BACK_X, y:Math.round(PH*0.32),
       fontSize:14, fontFamily:family, fontWeight:weight,
       color:"#ffffff", strokeColor:"#000000", strokeWidth:0,
-      italic:false, letterSpacing:4, textAlign:"center", scaleX:1,
+      italic:false, letterSpacing:0, textAlign:"center", scaleX:1,
     }]);
     setSel(id); setRTab("props");
     toast("스폰 등판 플레이스홀더 추가!");
