@@ -771,8 +771,69 @@ function DesignTool() {
 
   const addText = (preset) => {
     const id=nid();
-    setLayers(p=>[...p,{ id,type:"text",text:preset,x:PW/2,y:PH/2-25,fontSize:52,fontFamily:"'Arial Black',sans-serif",fontWeight:"900",color:"#ffffff",strokeColor:"#000000",strokeWidth:3,italic:false,letterSpacing:2,textAlign:"center" }]);
+    // 현재 등록된 폰트 중 마지막(가장 최근) 폰트 사용
+    const lastFont = fonts[fonts.length-1];
+    const fontFamily = lastFont?.value || lastFont?.name || "'Arial Black',sans-serif";
+    const fontWeight = lastFont?.weight || "900";
+    setLayers(p=>[...p,{ id,type:"text",text:preset,x:PW/2,y:PH/2-25,fontSize:52,fontFamily,fontWeight,color:"#ffffff",strokeColor:"#000000",strokeWidth:3,italic:false,letterSpacing:2,textAlign:"center" }]);
     setSel(id); setRTab("props");
+  };
+
+  // ── 등판 레이아웃 템플릿 ──
+  // 캔버스(720×450) 기준: 등판 중심 x≈540(오른쪽 패널 중앙), y≈265
+  const BACK_X = Math.round(PW * 0.755); // 544
+  const BACK_Y = Math.round(PH * 0.585); // 263
+
+  // 현재 폰트 목록에서 사용할 폰트 결정 (커스텀 폰트 우선, 없으면 빌트인 마지막)
+  const getActiveFont = () => {
+    const builtinNames = new Set(BUILTIN_FONTS.map(f=>f.name));
+    const custom = fonts.filter(f=>!builtinNames.has(f.name));
+    const target = custom.length ? custom[custom.length-1] : fonts[fonts.length-1];
+    return { family: target?.value||target?.name||"'Arial Black',sans-serif", weight: target?.weight||"400" };
+  };
+
+  // 등판 1줄: 영문명 한 줄 — 등판 중앙 배치, 크기 25, 현재 폰트
+  const addBackPanel1 = () => {
+    const id = nid();
+    const {family, weight} = getActiveFont();
+    setLayers(p=>[...p,{
+      id, type:"text", text:"영문명",
+      x:BACK_X, y:BACK_Y,
+      fontSize:25, fontFamily:family, fontWeight:weight,
+      color:"#ffffff", strokeColor:"#000000", strokeWidth:0,
+      italic:false, letterSpacing:2, textAlign:"center", scaleX:1,
+    }]);
+    setSel(id); setRTab("props");
+  };
+
+  // 등판 2줄: 한글명(위) + 영문명(아래) 두 줄 — 등판 중앙 배치
+  const addBackPanel2 = () => {
+    const id1=nid(), id2=nid();
+    const {family, weight} = getActiveFont();
+    const base = { type:"text", x:BACK_X, fontSize:22, fontFamily:family, fontWeight:weight,
+      color:"#ffffff", strokeColor:"#000000", strokeWidth:0,
+      italic:false, letterSpacing:2, textAlign:"center", scaleX:1 };
+    setLayers(p=>[...p,
+      {...base, id:id1, text:"한글명",  y:BACK_Y-20},
+      {...base, id:id2, text:"영문명",  y:BACK_Y+18, fontSize:18},
+    ]);
+    setSel(id2); setRTab("props");
+    toast("등판 2줄 레이아웃 추가!");
+  };
+
+  // 스폰 등판: 스폰서 로고 위치용 텍스트 플레이스홀더 (추후 로고 레이어로 확장 예정)
+  const addSponBack = () => {
+    const id = nid();
+    const {family, weight} = getActiveFont();
+    setLayers(p=>[...p,{
+      id, type:"text", text:"SPONSOR",
+      x:BACK_X, y:Math.round(PH*0.38),
+      fontSize:14, fontFamily:family, fontWeight:weight,
+      color:"#ffffff", strokeColor:"#000000", strokeWidth:0,
+      italic:false, letterSpacing:4, textAlign:"center", scaleX:1,
+    }]);
+    setSel(id); setRTab("props");
+    toast("스폰 등판 플레이스홀더 추가!");
   };
   // ── 목업 라이브러리: 여러 파일 추가
 const addToLib = async (files) => {
@@ -1017,7 +1078,15 @@ const addLogo = (file) => {
   </>}
 </Sec>
         <Sec title="✏️ 텍스트 추가">
-          {["동호회명","한글명","영문명","번호","기타"].map(t=><SBtn key={t} full onClick={()=>addText(t)} style={{marginBottom:4}}>{t}</SBtn>)}
+          {["동호회명","한글명","영문명","번호","기타"].map(t=>(
+            <SBtn key={t} full onClick={()=>addText(t)} style={{marginBottom:4}}>{t}</SBtn>
+          ))}
+        </Sec>
+        <Sec title="👕 등판 레이아웃">
+          <div style={{fontSize:10,color:"#64748b",marginBottom:5}}>현재 폰트·크기·위치 자동 적용</div>
+          <SBtn full onClick={addBackPanel1} color="#1d4ed8" style={{marginBottom:4}}>등판 1줄</SBtn>
+          <SBtn full onClick={addBackPanel2} color="#065f46" style={{marginBottom:4}}>등판 2줄</SBtn>
+          <SBtn full onClick={addSponBack}   color="#4c1d95" style={{marginBottom:4}}>스폰 등판</SBtn>
         </Sec>
         <Sec title="🖼 로고">
           <input type="file" accept="image/*" ref={lgRef} style={{display:"none"}} onChange={e=>addLogo(e.target.files[0])} />
