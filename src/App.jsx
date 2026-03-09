@@ -698,7 +698,8 @@ function DesignTool() {
   const [upProg, setUpProg]   = useState(null);  // {current,total,name} 업로드 진행상태
   const [layers, setLayers]   = useState([]);
   const [sel, setSel]         = useState(null);
-  const [fonts, setFonts]     = useState(BUILTIN_FONTS);
+  const [fonts, setFonts]       = useState(BUILTIN_FONTS);
+  const fontLoadedRef           = useRef(false); // 폰트 초기 로드 여부
   const [custName, setCN]     = useState("");
   const [saves, setSaves]     = useState([]);
   const [rTab, setRTab]       = useState("props");
@@ -722,14 +723,41 @@ function DesignTool() {
       if(lib?.length) setLib(lib);
     }catch(e){ console.error("라이브러리 로드 실패",e); }
     finally{ libLoadedRef.current=true; }
+    // ── 커스텀 폰트 로드 (Firebase Storage URL → FontFace 복원)
+    try{
+      const saved = await ld("ds:__fonts",[]);
+      if(saved?.length){
+        const loaded=[];
+        for(const f of saved){
+          try{
+            const res=await fetch(f.url);
+            const buf=await res.arrayBuffer();
+            const ff=new FontFace(f.name, buf, {weight:f.weight||"400"});
+            await ff.load();
+            document.fonts.add(ff);
+            loaded.push(f);
+          }catch(e){ console.warn("폰트 복원 실패:",f.name,e); }
+        }
+        if(loaded.length) setFonts(p=>[...BUILTIN_FONTS,...loaded]);
+      }
+    }catch(e){ console.error("폰트 목록 로드 실패",e); }
+    finally{ fontLoadedRef.current=true; }
   })(); },[]);
 
-  // ── mockupLib 변경될 때마다 Firestore에 자동 저장 (setState 밖에서 안전하게)
+  // ── mockupLib 변경될 때마다 Firestore에 자동 저장
   useEffect(()=>{
-    if(!libLoadedRef.current) return; // 초기 로드 전엔 저장 안함
+    if(!libLoadedRef.current) return;
     const toSave = mockupLib.filter(x=>x.url?.startsWith("https://"));
     sv("ds:__mklib", toSave).catch(console.error);
   },[mockupLib]);
+
+  // ── fonts 변경될 때마다 Firestore에 자동 저장 (BUILTIN 제외, URL 있는 것만)
+  useEffect(()=>{
+    if(!fontLoadedRef.current) return;
+    const builtinNames = new Set(BUILTIN_FONTS.map(f=>f.name));
+    const toSave = fonts.filter(f=>!builtinNames.has(f.name) && f.url);
+    sv("ds:__fonts", toSave).catch(console.error);
+  },[fonts]);
 
   const addText = (preset) => {
     const id=nid();
@@ -793,9 +821,33 @@ const addLogo = (file) => {
     }; r.readAsDataURL(file);
   };
   const loadFont = async(file) => {
-    if(!file)return; const name=file.name.replace(/\.[^/.]+$/,"");
-    const buf=await file.arrayBuffer(); const ff=new FontFace(name,buf); await ff.load(); document.fonts.add(ff);
-    setFonts(p=>[...p,{name,value:name,weight:"400"}]); toast(`폰트 "${name}" 로드 완료!`);
+    if(!file) return;
+    const name = file.name.replace(/\.[^/.]+$/,"");
+    toast("폰트 업로드 중...", true);
+    try{
+      // FontFace로 즉시 적용
+      const buf = await file.arrayBuffer();
+      const ff  = new FontFace(name, buf, {weight:"400"});
+      await ff.load();
+      document.fonts.add(ff);
+      // Firebase Storage에 업로드 → URL 획득
+      let url = "";
+      try{
+        const storageRef = ref(storage, `fonts/${name}_${Date.now()}.${file.name.split(".").pop()}`);
+        await uploadBytes(storageRef, file);
+        url = await getDownloadURL(storageRef);
+      }catch(e){ console.warn("폰트 Storage 업로드 실패, 로컬만 사용:",e); }
+      // fontLoadedRef 강제 true (로드 완료 전에 setFonts 트리거 방지)
+      fontLoadedRef.current = true;
+      setFonts(p=>{
+        if(p.some(f=>f.name===name)) return p; // 중복 방지
+        return [...p, {name, value:name, weight:"400", url}];
+      });
+      toast(`폰트 "${name}" 등록 완료!${url?" ☁️ 저장됨":" (이 기기만)"}`);
+    }catch(e){
+      console.error("폰트 로드 실패:",e);
+      toast("폰트 로드 실패", false);
+    }
   };
 
   const onLayerMD = (e,id,mode="move") => {
@@ -946,10 +998,43 @@ const addLogo = (file) => {
           <SBtn full onClick={()=>lgRef.current.click()}>📂 로고 불러오기</SBtn>
           <a href="https://www.remove.bg" target="_blank" rel="noreferrer" style={{display:"block",background:"#f97316",color:"white",padding:"6px 0",borderRadius:6,textAlign:"center",fontSize:12,textDecoration:"none",marginTop:5}}>🖼 배경 제거 (remove.bg)</a>
         </Sec>
-        <Sec title="🔤 폰트">
-          <input type="file" accept=".ttf,.otf,.woff,.woff2" ref={fnRef} style={{display:"none"}} onChange={e=>loadFont(e.target.files[0])} />
-          <SBtn full onClick={()=>fnRef.current.click()}>📂 폰트 불러오기</SBtn>
-        </Sec>
+        {(()=>{
+          const builtinNames = new Set(BUILTIN_FONTS.map(f=>f.name));
+          const customFonts  = fonts.filter(f=>!builtinNames.has(f.name));
+          const removeFont   = async(fname) => {
+            const item = fonts.find(x=>x.name===fname);
+            if(item?.url?.startsWith("https://")){
+              try{
+                const sRef=ref(storage,decodeURIComponent(item.url.split("/o/")[1]?.split("?")[0]||""));
+                await deleteObject(sRef);
+              }catch{}
+            }
+            setFonts(p=>p.filter(x=>x.name!==fname));
+          };
+          return (
+            <Sec title="🔤 폰트">
+              <input type="file" accept=".ttf,.otf,.woff,.woff2" ref={fnRef} style={{display:"none"}} onChange={e=>loadFont(e.target.files[0])} />
+              <SBtn full onClick={()=>fnRef.current.click()}>📂 폰트 불러오기</SBtn>
+              {customFonts.length>0&&(
+                <div style={{marginTop:6,display:"flex",flexDirection:"column",gap:3}}>
+                  <div style={{fontSize:10,color:"#64748b",marginBottom:2}}>등록된 폰트 ({customFonts.length}개)</div>
+                  {customFonts.map(f=>(
+                    <div key={f.name} style={{display:"flex",alignItems:"center",justifyContent:"space-between",
+                      background:"#1e293b",borderRadius:6,padding:"4px 8px",border:"1px solid #334155"}}>
+                      <span style={{fontSize:11,color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",
+                        whiteSpace:"nowrap",maxWidth:"80%",fontFamily:f.value||f.name}}>
+                        {f.url?"☁️ ":"💾 "}{f.name}
+                      </span>
+                      <button onClick={()=>removeFont(f.name)}
+                        style={{background:"#7f1d1d",border:"none",color:"white",borderRadius:4,
+                          width:18,height:18,cursor:"pointer",fontSize:10,flexShrink:0,lineHeight:1}}>✕</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Sec>
+          );
+        })()}
       </div>
 
       {/* CENTER */}
