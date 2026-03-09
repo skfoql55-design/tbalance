@@ -706,7 +706,7 @@ function DesignTool() {
   const [fonts, setFonts]       = useState(BUILTIN_FONTS);
   const fontLoadedRef           = useRef(false); // 폰트 초기 로드 여부
   const [custName, setCN]     = useState("");
-  const [saves, setSaves]     = useState([]);
+  const [saves, setSaves]     = useState([]); // [{key,custName,savedAt,layerCount}]
   const [rTab, setRTab]       = useState("props");
   const [toast_, setToast]    = useState(null);
   const [drag, setDrag]       = useState(false);
@@ -718,10 +718,11 @@ function DesignTool() {
   const toast = (m,ok=true) => { setToast({m,ok}); setTimeout(()=>setToast(null),2200); };
 
   // ── 초기 로드
-  const libLoadedRef = useRef(false); // 초기 로드 여부 추적
+  const libLoadedRef  = useRef(false); // 초기 로드 여부 추적
+  const draftLoadedRef = useRef(false); // 드래프트 로드 완료 여부
   useEffect(()=>{ (async()=>{
     // 거래처 저장 목록 로드 (Firestore)
-    try{ const list=await ld("ds:__saves",[]); setSaves(list); }catch{}
+    try{ const raw=await ld("ds:__saves",[]); const list=raw.map(x=>typeof x==="string"?{key:x,custName:x,savedAt:null,layerCount:0}:x); setSaves(list); }catch{}
     // 목업 이미지 라이브러리 로드 (Firestore: URL 목록)
     try{
       const lib=await ld("ds:__mklib",[]);
@@ -756,6 +757,17 @@ function DesignTool() {
       }
     }catch(e){ console.error("폰트 목록 로드 실패",e); }
     finally{ fontLoadedRef.current=true; }
+    finally{ fontLoadedRef.current=true; }
+    // ── 드래프트 복원: 새로고침/탭이동 후 마지막 작업 상태 복원
+    try{
+      const draft = await ld("ds:__draft", null);
+      if(draft?.layers?.length || draft?.mockup){
+        if(draft.mockup) setMockup(draft.mockup);
+        if(draft.layers?.length) setLayers(draft.layers);
+        if(draft.custName) setCN(draft.custName);
+      }
+    }catch(e){ console.warn("드래프트 복원 실패",e); }
+    finally{ draftLoadedRef.current = true; }
   })(); },[]);
 
   // ── mockupLib 변경될 때마다 Firestore에 자동 저장
@@ -764,6 +776,19 @@ function DesignTool() {
     const toSave = mockupLib.filter(x=>x.url?.startsWith("https://"));
     sv("ds:__mklib", toSave).catch(console.error);
   },[mockupLib]);
+
+  // ── 드래프트 자동저장: mockup/layers/custName 변경 시 Firestore에 실시간 저장
+  //    새로고침/탭이동 후에도 마지막 작업 상태 유지
+  const draftTimerRef = useRef(null);
+  useEffect(()=>{
+    if(!draftLoadedRef.current) return; // 드래프트 로드 전 저장 방지
+    clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = setTimeout(()=>{
+      sv("ds:__draft", {mockup, layers, custName, updatedAt: new Date().toISOString()})
+        .catch(e=>console.warn("드래프트 저장 실패",e));
+    }, 800); // 800ms 디바운스
+    return ()=>clearTimeout(draftTimerRef.current);
+  },[mockup, layers, custName]);
 
   // ── selIds → selIdsRef 동기화
   useEffect(()=>{ selIdsRef.current = selIds; },[selIds]);
@@ -1053,9 +1078,36 @@ const addLogo = (file) => {
   };
   const download = async()=>{ const cv=await renderCanvas(2); const a=document.createElement("a"); a.href=cv.toDataURL("image/png"); a.download=`${custName||"등판시안"}.png`; a.click(); toast("다운로드 완료!"); };
   const copy = async()=>{ try{ const cv=await renderCanvas(2); cv.toBlob(async b=>{ await navigator.clipboard.write([new ClipboardItem({"image/png":b})]); toast("클립보드 복사 완료!"); }); }catch{ toast("복사 실패",false); } };
-  const saveCust = async()=>{ if(!custName.trim()){ toast("거래처명 입력 필요",false); return; } const k=custName.trim(); const list=await ld("ds:__saves",[]); const next=[...new Set([...list,k])]; await sv("ds:__saves",next); await sv(`ds:cust:${k}`,{mockup,layers}); setSaves(next); toast(`"${custName}" 저장 완료!`); };
-  const loadCust = async(k)=>{ try{ const d=await ld(`ds:cust:${k}`,null); if(!d)return; setMockup(d.mockup||null); setLayers(d.layers||[]); setCN(k); setSel(null); toast(`불러오기 완료!`); }catch(e){ console.error(e); } };
-  const delCust  = async(k)=>{ const list=await ld("ds:__saves",[]); const next=list.filter(x=>x!==k); await sv("ds:__saves",next); setSaves(next); };
+  const saveCust = async()=>{
+    if(!custName.trim()){ toast("거래처명 입력 필요",false); return; }
+    const k = custName.trim();
+    const savedAt = new Date().toLocaleString("ko-KR",{year:"2-digit",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+    const meta = { key:k, custName:k, savedAt, layerCount:layers.length };
+    // 전체 데이터 저장 (mockup URL + layers 전체 속성)
+    await sv(`ds:cust:${k}`, { mockup, layers, custName:k, savedAt });
+    // 목록 업데이트 (동일 거래처명이면 덮어씀)
+    const prevList = await ld("ds:__saves",[]);
+    const filtered = prevList.filter(x=>(typeof x==="string"?x:x.key) !== k);
+    const next = [meta, ...filtered]; // 최신이 맨 위
+    await sv("ds:__saves", next);
+    setSaves(next);
+    toast(`💾 "${k}" 저장 완료! (${savedAt})`);
+  };
+  const loadCust = async(k)=>{ try{
+    const d=await ld(`ds:cust:${k}`,null); if(!d)return;
+    setMockup(d.mockup||null);
+    setLayers(d.layers||[]);
+    setCN(d.custName||k);
+    setSel(null); setSelIds(new Set());
+    toast(`📂 "${d.custName||k}" 불러오기 완료!`);
+  }catch(e){ console.error(e); toast("불러오기 실패",false); } };
+  const delCust = async(k)=>{
+    const list = await ld("ds:__saves",[]);
+    const next = list.filter(x=>(typeof x==="string"?x:x.key) !== k);
+    await sv("ds:__saves",next);
+    setSaves(next);
+    toast(`🗑 "${k}" 삭제됨`);
+  };
   const delLayer = id=>{ setLayers(p=>p.filter(l=>l.id!==id)); if(sel===id)setSel(null); };
 
   return (
@@ -1385,15 +1437,47 @@ const addLogo = (file) => {
           )}
           {rTab==="saves" && (
             <div style={{display:"flex",flexDirection:"column",gap:6}}>
-              <div style={{fontSize:10,color:"#64748b",marginBottom:4}}>거래처명 입력 후 [저장] 버튼</div>
-              {saves.length===0&&<div style={{color:"#4b5563",fontSize:12,textAlign:"center",paddingTop:20}}>저장된 시안 없음</div>}
-              {saves.map(k=>(
-                <div key={k} style={{display:"flex",gap:5,alignItems:"center",background:"#1e293b",borderRadius:6,padding:"7px 8px"}}>
-                  <span style={{flex:1,fontSize:12,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{k.replace("ds:","")}</span>
-                  <SBtn onClick={()=>loadCust(k)} color="#1e3a5f">열기</SBtn>
-                  <SBtn onClick={()=>delCust(k)} color="#7f1d1d">삭제</SBtn>
+              <div style={{fontSize:10,color:"#64748b",marginBottom:4}}>
+                거래처명 입력 후 [💾 저장] — 새로고침 후에도 유지됩니다
+              </div>
+              {saves.length===0 && (
+                <div style={{color:"#4b5563",fontSize:12,textAlign:"center",paddingTop:20}}>
+                  저장된 시안 없음
                 </div>
-              ))}
+              )}
+              {saves.map(item=>{
+                const k    = typeof item==="string" ? item : item.key;
+                const name = typeof item==="string" ? item : item.custName;
+                const date = typeof item==="string" ? null  : item.savedAt;
+                const cnt  = typeof item==="string" ? null  : item.layerCount;
+                return (
+                  <div key={k} style={{background:"#1e293b",borderRadius:8,padding:"8px 10px",border:"1px solid #334155"}}>
+                    {/* 거래처명 + 삭제 */}
+                    <div style={{display:"flex",alignItems:"center",gap:4,marginBottom:4}}>
+                      <span style={{flex:1,fontSize:13,fontWeight:600,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {name}
+                      </span>
+                      <button onClick={()=>delCust(k)}
+                        style={{background:"#7f1d1d",border:"none",color:"white",borderRadius:4,padding:"2px 7px",fontSize:10,cursor:"pointer",flexShrink:0}}>
+                        삭제
+                      </button>
+                    </div>
+                    {/* 저장 날짜·시간 + 레이어 수 */}
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:6}}>
+                      <span style={{fontSize:10,color:"#64748b"}}>
+                        {date ? `🕐 ${date}` : "날짜 없음"}
+                      </span>
+                      {cnt!=null && (
+                        <span style={{fontSize:10,color:"#475569"}}>
+                          레이어 {cnt}개
+                        </span>
+                      )}
+                    </div>
+                    {/* 열기 버튼 */}
+                    <SBtn full onClick={()=>loadCust(k)} color="#1e3a5f">📂 열기</SBtn>
+                  </div>
+                );
+              })}
             </div>
           )}
         </div>
