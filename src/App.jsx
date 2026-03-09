@@ -700,6 +700,9 @@ function DesignTool() {
   const [layers, setLayers]   = useState([]);
   const [sel, setSel]         = useState(null);      // 속성 탭 표시용 (마지막 선택)
   const [selIds, setSelIds]   = useState(new Set()); // 멀티셀렉트용 Set
+  const selIdsRef             = useRef(new Set());   // 동기 ref (onMM 콜백용)
+  const historyRef            = useRef([]);           // Undo 스택
+  const MAX_HISTORY           = 50;
   const [fonts, setFonts]       = useState(BUILTIN_FONTS);
   const fontLoadedRef           = useRef(false); // 폰트 초기 로드 여부
   const [custName, setCN]     = useState("");
@@ -761,6 +764,9 @@ function DesignTool() {
     const toSave = mockupLib.filter(x=>x.url?.startsWith("https://"));
     sv("ds:__mklib", toSave).catch(console.error);
   },[mockupLib]);
+
+  // ── selIds → selIdsRef 동기화
+  useEffect(()=>{ selIdsRef.current = selIds; },[selIds]);
 
   // ── fonts 변경될 때마다 Firestore에 자동 저장 (BUILTIN 제외, URL 있는 것만)
   useEffect(()=>{
@@ -942,65 +948,89 @@ const addLogo = (file) => {
   const onLayerMD = (e,id,mode="move") => {
     e.preventDefault(); e.stopPropagation();
     const isShift = e.shiftKey;
-    // Shift+클릭: 멀티셀렉트 토글
+    // Shift+클릭: 멀티셀렉트 토글 (selIdsRef 즉시 동기화)
+    let nextIds;
     if(isShift){
-      setSelIds(prev=>{
-        const next = new Set(prev);
-        if(next.has(id)) next.delete(id); else next.add(id);
-        return next;
-      });
-      setSel(id);
+      nextIds = new Set(selIdsRef.current);
+      nextIds.has(id) ? nextIds.delete(id) : nextIds.add(id);
     } else {
-      // 일반 클릭: 기존 선택이 이 레이어 하나면 유지, 아니면 단일 선택
-      setSelIds(new Set([id]));
-      setSel(id);
+      nextIds = new Set([id]);
     }
-    const layer=layers.find(l=>l.id===id);
-    const rect=prevRef.current.getBoundingClientRect();
-    // 드래그 시작: 멀티셀렉트된 모든 레이어의 초기 위치 저장
-    const currentIds = e.shiftKey
-      ? (() => { const s = new Set([id]); return s; })() // 실제 최신 selIds는 setState 비동기라 직접 계산
-      : new Set([id]);
-    // 멀티드래그: selIds에 현재 id 포함 여부에 따라 전체 or 단일
-    dragRef.current={
+    setSelIds(nextIds);
+    selIdsRef.current = nextIds;
+    setSel(id);
+
+    if(mode !== "move" && mode !== "resize") return;
+    const layer = layers.find(l=>l.id===id);
+    if(!layer) return;
+    const rect = prevRef.current.getBoundingClientRect();
+
+    // 드래그 시작 시 선택된 모든 레이어의 원점 즉시 저장 → 간격 보존 핵심
+    const multiOrigins = {};
+    nextIds.forEach(lid => {
+      const la = layers.find(x=>x.id===lid);
+      if(la) multiOrigins[lid] = { ox: la.x, oy: la.y };
+    });
+
+    // Undo 스냅샷: 드래그 시작 전 레이어 상태 저장
+    historyRef.current = [...historyRef.current.slice(-(MAX_HISTORY-1)), [...layers]];
+
+    dragRef.current = {
       id, mode,
-      shiftLock: isShift, // Shift 누른 상태면 X축 고정
-      sx:e.clientX-rect.left, sy:e.clientY-rect.top,
-      ox:layer.x, oy:layer.y, ow:layer.width||0, oh:layer.height||0,
+      shiftLock: isShift,
+      sx: e.clientX - rect.left,
+      sy: e.clientY - rect.top,
+      ox: layer.x, oy: layer.y,
+      ow: layer.width||0, oh: layer.height||0,
+      multiOrigins,
     };
   };
   const onMM = useCallback((e) => {
-    if(!dragRef.current||!prevRef.current)return;
-    const rect=prevRef.current.getBoundingClientRect();
-    const cx=e.clientX-rect.left, cy=e.clientY-rect.top;
-    const dx=cx-dragRef.current.sx, dy=cy-dragRef.current.sy;
+    if(!dragRef.current || !prevRef.current) return;
+    const rect = prevRef.current.getBoundingClientRect();
+    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    const dx = cx - dragRef.current.sx,  dy = cy - dragRef.current.sy;
     const shiftNow = e.shiftKey || dragRef.current.shiftLock;
-    if(dragRef.current.mode==="resize"){
-      upd(dragRef.current.id,{width:Math.max(30,dragRef.current.ow+dx),height:Math.max(30,dragRef.current.oh+dy)});
+
+    if(dragRef.current.mode === "resize"){
+      upd(dragRef.current.id, {
+        width:  Math.max(30, dragRef.current.ow + dx),
+        height: Math.max(30, dragRef.current.oh + dy),
+      });
       return;
     }
-    // move 모드
-    setSelIds(prev=>{
-      const ids = prev.size > 0 ? prev : new Set([dragRef.current.id]);
-      setLayers(ls=>ls.map(l=>{
-        if(!ids.has(l.id)) return l;
-        // 드래그 기준 레이어의 초기 위치 대비 상대 오프셋 계산
-        const baseOx = l.id===dragRef.current.id
-          ? dragRef.current.ox
-          : (dragRef.current.multiOrigins?.[l.id]?.ox ?? l.x);
-        const baseOy = l.id===dragRef.current.id
-          ? dragRef.current.oy
-          : (dragRef.current.multiOrigins?.[l.id]?.oy ?? l.y);
-        // Shift: X 고정, Y만 이동
-        return shiftNow
-          ? {...l, y: baseOy+dy}
-          : {...l, x: baseOx+dx, y: baseOy+dy};
-      }));
-      return prev;
-    });
-  },[]);
-  const onMU = useCallback(()=>{ if(dragRef.current){ dragRef.current.multiOrigins={}; } dragRef.current=null; },[]);
+
+    // move: selIdsRef.current 직접 읽어 setSelIds 중첩 없이 처리
+    const ids     = selIdsRef.current.size > 0 ? selIdsRef.current : new Set([dragRef.current.id]);
+    const origins = dragRef.current.multiOrigins;
+
+    setLayers(ls => ls.map(l => {
+      if(!ids.has(l.id)) return l;
+      const orig = origins[l.id];
+      if(!orig) return l;
+      // 각 레이어를 드래그 시작 원점 기준으로 이동 → 상대 간격 완벽 보존
+      return shiftNow
+        ? { ...l, y: orig.oy + dy }              // Shift: X 고정, Y만
+        : { ...l, x: orig.ox + dx, y: orig.oy + dy }; // 일반: X·Y 동시
+    }));
+  }, []);
+  const onMU = useCallback(() => { dragRef.current = null; }, []);
   useEffect(()=>{ window.addEventListener("mousemove",onMM); window.addEventListener("mouseup",onMU); return()=>{ window.removeEventListener("mousemove",onMM); window.removeEventListener("mouseup",onMU); }; },[onMM,onMU]);
+  // ── Ctrl+Z Undo ──
+  useEffect(()=>{
+    const onKey = (e) => {
+      if((e.ctrlKey||e.metaKey) && e.key==="z" && !e.shiftKey){
+        e.preventDefault();
+        if(!historyRef.current.length) return;
+        const prev = historyRef.current[historyRef.current.length-1];
+        historyRef.current = historyRef.current.slice(0,-1);
+        setLayers(prev);
+        toast("↩ 되돌리기");
+      }
+    };
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[]);
 
   const renderCanvas = async(scale=2) => {
     const cv=document.createElement("canvas"); cv.width=PW*scale; cv.height=PH*scale;
