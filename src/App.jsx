@@ -1974,7 +1974,7 @@ function InventoryPage({db}){
   // ── 구글시트 템플릿 다운로드 ──
   const downloadUniTemplate = () => {
     exportCSV("티밸런스_유니폼재고_템플릿.csv",
-      ["유니폼명","연도","대리점가","단체복가","인터넷최저가","도매가","매입단가","75","80","85","90","95","100","105","110","115","120"],
+      ["유니폼명","연도","대리점가","단체복가","인터넷최저가","도매가","원가","75","80","85","90","95","100","105","110","115","120"],
       [
         ["y25-01_스카이웨이브(블루)","2025","42000","45000","38000","35000","28000","0","5","10","15","12","8","5","3","1","0","0"],
         ["y25-02_그라비티(레드&블루)","2025","40000","43000","36000","33000","27000","0","3","7","10","8","5","3","1","0","0","0"],
@@ -2126,7 +2126,27 @@ function InventoryPage({db}){
       {ioMod&&<IOModal modal={ioMod} agencies={agencies} onClose={()=>setIO(null)} onSave={d=>{doIO(d);setIO(null);}}/>}
       {importMod&&<CSVImportModal modal={importMod} uniforms={uniforms} equips={equips}
         onClose={()=>setImportMod(null)}
-        onSaveUniforms={async(arr)=>{ await su([...arr,...uniforms]); toast_(`유니폼 ${arr.length}종 가져오기 완료!`); setImportMod(null); }}
+        onSaveUniforms={async(arr)=>{
+  // upsert: 이름이 같으면 업데이트(id·imgSrc 유지), 새 이름이면 추가
+  let updated=0, added=0;
+  const merged = [...uniforms]; // 기존 목록 복사
+  arr.forEach(incoming=>{
+    const idx = merged.findIndex(u=>
+      u.name?.trim().toLowerCase() === incoming.name?.trim().toLowerCase()
+    );
+    if(idx >= 0){
+      // 기존 유니폼: id·imgSrc 유지, 나머지 덮어쓰기
+      merged[idx] = { ...merged[idx], ...incoming, id:merged[idx].id, imgSrc:merged[idx].imgSrc };
+      updated++;
+    } else {
+      merged.unshift(incoming); // 새 항목은 맨 앞에 추가
+      added++;
+    }
+  });
+  await su(merged);
+  toast_(`✅ 업데이트 ${updated}종 / 신규 ${added}종 가져오기 완료!`);
+  setImportMod(null);
+}}
         onSaveEquips={async(arr)=>{ await se([...arr,...equips]); toast_(`용품 ${arr.length}종 가져오기 완료!`); setImportMod(null); }}
       />}
     </div>
@@ -2137,7 +2157,7 @@ function UniformListView({ uniforms, onEdit, onDel, onIO, onAdd }) {
   const downloadStockCSV = () => {
     const PRICE_LABELS = [
       ["agencyPrice","대리점가"],["shopPrice","단체복가"],
-      ["netPrice","인터넷최저가"],["friendPrice","도매가"],["costPrice","매입단가"]
+      ["netPrice","인터넷최저가"],["friendPrice","도매가"],["costPrice","원가"]
     ];
     const SZLIST = ["75","80","85","90","95","100","105","110","115","120"];
     // 헤더
@@ -2374,7 +2394,7 @@ function UniformModal({onClose,onSave,initial}){
   const [shopPrice,   setShopPrice]   = useState(initial?.shopPrice||"");    // 단체복가
   const [netPrice,    setNetPrice]    = useState(initial?.netPrice||"");     // 인터넷최저가
   const [friendPrice, setFriendPrice] = useState(initial?.friendPrice||""); // 도매가
-  const [costPrice,   setCostPrice]   = useState(initial?.costPrice||"");   // 매입단가
+  const [costPrice,   setCostPrice]   = useState(initial?.costPrice||"");   // 원가
   const [cs,setCS]=useState("");
   const [uploading,setUploading]=useState(false);
   const imgRef=useRef();
@@ -2429,9 +2449,9 @@ function UniformModal({onClose,onSave,initial}){
       <div style={{fontSize:10,color:"#64748b",marginTop:3}}>단품 매출 등록 시 단가 유형을 선택해서 자동계산</div>
     </div>
     <div style={GS.fGrid}>
-      <MFR label="매입단가 (원)">
+      <MFR label="원가 (원)">
         <input type="number" style={GS.inp} value={costPrice} onChange={e=>setCostPrice(e.target.value)} placeholder="예) 28000"/>
-        <div style={{fontSize:10,color:"#64748b",marginTop:3}}>수입원가 자동계산</div>
+        <div style={{fontSize:10,color:"#64748b",marginTop:3}}>원가 자동계산</div>
       </MFR>
     </div>
     <MFR label="사이즈 선택">
@@ -2520,12 +2540,12 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
       const name = row["유니폼명"] || row["이름"] || row["name"] || "";
       const year = row["연도"] || row["year"] || String(new Date().getFullYear());
       // 단가 컬럼 파싱
-      const PRICE_META = ["유니폼명","이름","name","연도","year","대리점가","단체복가","인터넷최저가","도매가","매입단가","agencyPrice","shopPrice","netPrice","friendPrice","costPrice"];
+      const PRICE_META = ["유니폼명","이름","name","연도","year","대리점가","단체복가","인터넷최저가","도매가","원가","매입단가","agencyPrice","shopPrice","netPrice","friendPrice","costPrice"];
       const agencyPrice  = Number(row["대리점가"]  || row["agencyPrice"]  || 0);
       const shopPrice    = Number(row["단체복가"]  || row["shopPrice"]    || 0);
       const netPrice     = Number(row["인터넷최저가"]|| row["netPrice"]    || 0);
       const friendPrice  = Number(row["도매가"]    || row["friendPrice"]  || 0);
-      const costPrice    = Number(row["매입단가"]  || row["costPrice"]    || 0);
+      const costPrice    = Number(row["원가"]     || row["매입단가"]  || row["costPrice"] || 0);
       // 나머지 컬럼은 사이즈로 처리
       const sizeKeys = Object.keys(row).filter(k => !PRICE_META.includes(k));
       const sizes = {};
@@ -2605,7 +2625,7 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
                   {u.shopPrice>0&&<span style={{fontSize:10,background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",borderRadius:4,padding:"1px 6px",color:"#fcd34d"}}>단체복 {u.shopPrice.toLocaleString()}원</span>}
                   {u.netPrice>0&&<span style={{fontSize:10,background:"rgba(16,185,129,0.15)",border:"1px solid #10b981",borderRadius:4,padding:"1px 6px",color:"#6ee7b7"}}>인터넷 {u.netPrice.toLocaleString()}원</span>}
                   {u.friendPrice>0&&<span style={{fontSize:10,background:"rgba(139,92,246,0.15)",border:"1px solid #8b5cf6",borderRadius:4,padding:"1px 6px",color:"#c4b5fd"}}>도매 {u.friendPrice.toLocaleString()}원</span>}
-                  {u.costPrice>0&&<span style={{fontSize:10,background:"rgba(100,116,139,0.15)",border:"1px solid #475569",borderRadius:4,padding:"1px 6px",color:"#94a3b8"}}>매입 {u.costPrice.toLocaleString()}원</span>}
+                  {u.costPrice>0&&<span style={{fontSize:10,background:"rgba(100,116,139,0.15)",border:"1px solid #475569",borderRadius:4,padding:"1px 6px",color:"#94a3b8"}}>원가 {u.costPrice.toLocaleString()}원</span>}
                 </div>
               )}
             </div>
