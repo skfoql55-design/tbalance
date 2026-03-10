@@ -2542,7 +2542,6 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
       // 단가 컬럼 파싱
       const parsePrice = v => Number(String(v||"").replace(/,/g,"").trim()) || 0;
       const PRICE_META = ["유니폼명","이름","name","연도","year","대리점가","단체복가","인터넷최저가","도매가","원가","매입단가","agencyPrice","shopPrice","netPrice","friendPrice","costPrice"];
-      const agencyPrice  = Number(row["대리점가"]  || row["agencyPrice"]  || 0);
       const agencyPrice  = parsePrice(row["대리점가"]  || row["agencyPrice"]);
       const shopPrice    = parsePrice(row["단체복가"]  || row["shopPrice"]);
       const netPrice     = parsePrice(row["인터넷최저가"]|| row["netPrice"]);
