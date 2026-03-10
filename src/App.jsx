@@ -1975,7 +1975,7 @@ function InventoryPage({db}){
   // ── 구글시트 템플릿 다운로드 ──
   const downloadUniTemplate = () => {
     exportCSV("티밸런스_유니폼재고_템플릿.csv",
-      ["유니폼명","연도","대리점가","용품점가","인터넷최저가","지인가","매입단가","75","80","85","90","95","100","105","110","115","120"],
+      ["유니폼명","연도","대리점가","단체복가","인터넷최저가","도매가","매입단가","75","80","85","90","95","100","105","110","115","120"],
       [
         ["y25-01_스카이웨이브(블루)","2025","42000","45000","38000","35000","28000","0","5","10","15","12","8","5","3","1","0","0"],
         ["y25-02_그라비티(레드&블루)","2025","40000","43000","36000","33000","27000","0","3","7","10","8","5","3","1","0","0","0"],
@@ -2134,6 +2134,44 @@ function InventoryPage({db}){
   );
 }
 function UniformListView({ uniforms, onEdit, onDel, onIO, onAdd }) {
+  // ── 재고현황 CSV 다운로드 ──
+  const downloadStockCSV = () => {
+    const PRICE_LABELS = [
+      ["agencyPrice","대리점가"],["shopPrice","단체복가"],
+      ["netPrice","인터넷최저가"],["friendPrice","도매가"],["costPrice","매입단가"]
+    ];
+    const SZLIST = ["75","80","85","90","95","100","105","110","115","120"];
+    // 헤더
+    const headers = [
+      "유니폼명","연도",
+      ...PRICE_LABELS.map(([,l])=>l),
+      ...SZLIST, "총수량"
+    ];
+    // 데이터 행
+    const rows = uniforms.map(u => {
+      const sizes = u.sizes || {};
+      const szVals = SZLIST.map(s => sizes[s] ?? 0);
+      const total  = szVals.reduce((a,b)=>a+Number(b),0);
+      return [
+        u.name || "",
+        u.year || "",
+        ...PRICE_LABELS.map(([k]) => u[k] ? Number(u[k]).toLocaleString() : ""),
+        ...szVals,
+        total
+      ];
+    });
+    // CSV 생성 (BOM 포함 → 엑셀 한글 깨짐 방지)
+    const csv = [headers, ...rows]
+      .map(r => r.map(v => `"${String(v).replace(/"/g,'""')}"`).join(","))
+      .join("\n");
+    const blob = new Blob(["\uFEFF"+csv], {type:"text/csv;charset=utf-8;"});
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href = url;
+    a.download = `재고현황_${new Date().toLocaleDateString("ko-KR").replace(/\. /g,"-").replace(".","")}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
   const years = useMemo(() => {
     const ys = [...new Set(uniforms.map(u => u.year).filter(Boolean))].sort((a,b) => b-a);
     return ["전체", ...ys];
@@ -2172,7 +2210,8 @@ function UniformListView({ uniforms, onEdit, onDel, onIO, onAdd }) {
       {/* 툴바 */}
       <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
         <input style={{...GS.sInp,flex:1,minWidth:120,maxWidth:200}} placeholder="유니폼 검색..." value={search} onChange={e=>setSearch(e.target.value)}/>
-        <SBtn onClick={onAdd} color="#3b82f6" style={{marginLeft:"auto"}}>+ 유니폼 등록</SBtn>
+        <SBtn onClick={downloadStockCSV} color="#065f46" style={{}}>⬇ 재고현황 다운로드</SBtn>
+        <SBtn onClick={onAdd} color="#3b82f6" style={{}}>+ 유니폼 등록</SBtn>
       </div>
 
       {/* 년도 필터 */}
@@ -2333,9 +2372,9 @@ function UniformModal({onClose,onSave,initial}){
   const [imgSrc,setImg]=useState(initial?.imgSrc||null);
   const [sizes,setSizes]=useState(initial?.sizes||{});
   const [agencyPrice, setAgencyPrice] = useState(initial?.agencyPrice||"");  // 대리점가
-  const [shopPrice,   setShopPrice]   = useState(initial?.shopPrice||"");    // 용품점가
+  const [shopPrice,   setShopPrice]   = useState(initial?.shopPrice||"");    // 단체복가
   const [netPrice,    setNetPrice]    = useState(initial?.netPrice||"");     // 인터넷최저가
-  const [friendPrice, setFriendPrice] = useState(initial?.friendPrice||""); // 지인가
+  const [friendPrice, setFriendPrice] = useState(initial?.friendPrice||""); // 도매가
   const [costPrice,   setCostPrice]   = useState(initial?.costPrice||"");   // 매입단가
   const [cs,setCS]=useState("");
   const [uploading,setUploading]=useState(false);
@@ -2378,13 +2417,13 @@ function UniformModal({onClose,onSave,initial}){
         <MFR label="대리점가 (원)">
           <input type="number" style={GS.inp} value={agencyPrice} onChange={e=>setAgencyPrice(e.target.value)} placeholder="예) 42000"/>
         </MFR>
-        <MFR label="용품점가 (원)">
+        <MFR label="단체복가 (원)">
           <input type="number" style={GS.inp} value={shopPrice} onChange={e=>setShopPrice(e.target.value)} placeholder="예) 45000"/>
         </MFR>
         <MFR label="인터넷최저가 (원)">
           <input type="number" style={GS.inp} value={netPrice} onChange={e=>setNetPrice(e.target.value)} placeholder="예) 38000"/>
         </MFR>
-        <MFR label="지인가 (원)">
+        <MFR label="도매가 (원)">
           <input type="number" style={GS.inp} value={friendPrice} onChange={e=>setFriendPrice(e.target.value)} placeholder="예) 35000"/>
         </MFR>
       </div>
@@ -2482,11 +2521,11 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
       const name = row["유니폼명"] || row["이름"] || row["name"] || "";
       const year = row["연도"] || row["year"] || String(new Date().getFullYear());
       // 단가 컬럼 파싱
-      const PRICE_META = ["유니폼명","이름","name","연도","year","대리점가","용품점가","인터넷최저가","지인가","매입단가","agencyPrice","shopPrice","netPrice","friendPrice","costPrice"];
+      const PRICE_META = ["유니폼명","이름","name","연도","year","대리점가","단체복가","인터넷최저가","도매가","매입단가","agencyPrice","shopPrice","netPrice","friendPrice","costPrice"];
       const agencyPrice  = Number(row["대리점가"]  || row["agencyPrice"]  || 0);
-      const shopPrice    = Number(row["용품점가"]  || row["shopPrice"]    || 0);
+      const shopPrice    = Number(row["단체복가"]  || row["shopPrice"]    || 0);
       const netPrice     = Number(row["인터넷최저가"]|| row["netPrice"]    || 0);
-      const friendPrice  = Number(row["지인가"]    || row["friendPrice"]  || 0);
+      const friendPrice  = Number(row["도매가"]    || row["friendPrice"]  || 0);
       const costPrice    = Number(row["매입단가"]  || row["costPrice"]    || 0);
       // 나머지 컬럼은 사이즈로 처리
       const sizeKeys = Object.keys(row).filter(k => !PRICE_META.includes(k));
@@ -2564,9 +2603,9 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
               {(u.agencyPrice>0||u.shopPrice>0||u.netPrice>0||u.friendPrice>0||u.costPrice>0)&&(
                 <div style={{display:"flex",flexWrap:"wrap",gap:4,paddingTop:4,borderTop:"1px solid #334155"}}>
                   {u.agencyPrice>0&&<span style={{fontSize:10,background:"rgba(59,130,246,0.15)",border:"1px solid #3b82f6",borderRadius:4,padding:"1px 6px",color:"#93c5fd"}}>대리점 {u.agencyPrice.toLocaleString()}원</span>}
-                  {u.shopPrice>0&&<span style={{fontSize:10,background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",borderRadius:4,padding:"1px 6px",color:"#fcd34d"}}>용품점 {u.shopPrice.toLocaleString()}원</span>}
+                  {u.shopPrice>0&&<span style={{fontSize:10,background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",borderRadius:4,padding:"1px 6px",color:"#fcd34d"}}>단체복 {u.shopPrice.toLocaleString()}원</span>}
                   {u.netPrice>0&&<span style={{fontSize:10,background:"rgba(16,185,129,0.15)",border:"1px solid #10b981",borderRadius:4,padding:"1px 6px",color:"#6ee7b7"}}>인터넷 {u.netPrice.toLocaleString()}원</span>}
-                  {u.friendPrice>0&&<span style={{fontSize:10,background:"rgba(139,92,246,0.15)",border:"1px solid #8b5cf6",borderRadius:4,padding:"1px 6px",color:"#c4b5fd"}}>지인 {u.friendPrice.toLocaleString()}원</span>}
+                  {u.friendPrice>0&&<span style={{fontSize:10,background:"rgba(139,92,246,0.15)",border:"1px solid #8b5cf6",borderRadius:4,padding:"1px 6px",color:"#c4b5fd"}}>도매 {u.friendPrice.toLocaleString()}원</span>}
                   {u.costPrice>0&&<span style={{fontSize:10,background:"rgba(100,116,139,0.15)",border:"1px solid #475569",borderRadius:4,padding:"1px 6px",color:"#94a3b8"}}>매입 {u.costPrice.toLocaleString()}원</span>}
                 </div>
               )}
@@ -3015,7 +3054,7 @@ function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
               <div style={{fontWeight:600,fontSize:13,color:"#f1f5f9"}}>{selUni.name}</div>
               {/* 단가 유형 선택 탭 */}
               <div style={{display:"flex",gap:4,marginTop:6,flexWrap:"wrap"}}>
-                {[["agencyPrice","대리점가"],["shopPrice","용품점가"],["netPrice","인터넷최저가"],["friendPrice","지인가"]].map(([key,label])=>{
+                {[["agencyPrice","대리점가"],["shopPrice","단체복가"],["netPrice","인터넷최저가"],["friendPrice","도매가"]].map(([key,label])=>{
                   const price=Number(selUni[key]||0);
                   const isActive=priceType===key;
                   return <button key={key} onClick={()=>{
@@ -3087,7 +3126,7 @@ function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
           {selSize && Number(selUni[priceType]||0)>0 && (
             <div style={{marginTop:10,background:"#0f172a",borderRadius:7,padding:"8px 12px",border:"1px solid #1e3a5f"}}>{(()=>{
               const sp=Number(selUni[priceType]||0); const cp=Number(selUni.costPrice||0);
-              const ptLabel={agencyPrice:"대리점가",shopPrice:"용품점가",netPrice:"인터넷최저가",friendPrice:"지인가"}[priceType];
+              const ptLabel={agencyPrice:"대리점가",shopPrice:"단체복가",netPrice:"인터넷최저가",friendPrice:"도매가"}[priceType];
               return <>
                 <div style={{display:"flex",justifyContent:"space-between",marginBottom:3}}>
                   <span style={{fontSize:11,color:"#64748b"}}>매출액 ({ptLabel} {won(sp)} × {selQty}벌)</span>
