@@ -757,7 +757,6 @@ function DesignTool() {
       }
     }catch(e){ console.error("폰트 목록 로드 실패",e); }
     finally{ fontLoadedRef.current=true; }
-    finally{ fontLoadedRef.current=true; }
     // ── 드래프트 복원: 새로고침/탭이동 후 마지막 작업 상태 복원
     try{
       const draft = await ld("ds:__draft", null);
