@@ -2540,13 +2540,14 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
       const name = row["유니폼명"] || row["이름"] || row["name"] || "";
       const year = row["연도"] || row["year"] || String(new Date().getFullYear());
       // 단가 컬럼 파싱
+      const parsePrice = v => Number(String(v||"").replace(/,/g,"").trim()) || 0;
       const PRICE_META = ["유니폼명","이름","name","연도","year","대리점가","단체복가","인터넷최저가","도매가","원가","매입단가","agencyPrice","shopPrice","netPrice","friendPrice","costPrice"];
       const agencyPrice  = Number(row["대리점가"]  || row["agencyPrice"]  || 0);
-      const shopPrice    = Number(row["단체복가"]  || row["shopPrice"]    || 0);
-      const netPrice     = Number(row["인터넷최저가"]|| row["netPrice"]    || 0);
-      const friendPrice  = Number(row["도매가"]    || row["friendPrice"]  || 0);
-      const costPrice    = Number(row["원가"]     || row["매입단가"]  || row["costPrice"] || 0);
-      // 나머지 컬럼은 사이즈로 처리
+      const agencyPrice  = parsePrice(row["대리점가"]  || row["agencyPrice"]);
+      const shopPrice    = parsePrice(row["단체복가"]  || row["shopPrice"]);
+      const netPrice     = parsePrice(row["인터넷최저가"]|| row["netPrice"]);
+      const friendPrice  = parsePrice(row["도매가"]    || row["friendPrice"]);
+      const costPrice    = parsePrice(row["원가"]     || row["매입단가"]  || row["costPrice"]);
       const sizeKeys = Object.keys(row).filter(k => !PRICE_META.includes(k));
       const sizes = {};
       sizeKeys.forEach(sz => {
