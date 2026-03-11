@@ -1877,7 +1877,7 @@ function CalendarPage({ db, isMobile }) {
    MODULE 2 — INVENTORY
 ═══════════════════════════════════════════════════════ */
 function InventoryPage({db}){
-  const {uniforms,equips,invHist,agencies,uSales=[],su,se,sih,sag,sus,toast_}=db;
+  const {uniforms,equips,invHist,agencies,uSales=[],eSales=[],su,se,sih,sag,sus,ses,toast_}=db;
   const [tab,setTab]=useState("uniform");
   const [uMod,setUM]=useState(null);
   const [eMod,setEM]=useState(null);
@@ -1892,7 +1892,7 @@ function InventoryPage({db}){
   const delE = async id=>{ await se(equips.filter(e=>e.id!==id)); toast_("삭제"); };
   const addAg= async d=>{ const n=[{...d,id:gid()},...agencies]; await sag(n); toast_("대리점 등록!"); };
   const delAg= async id=>{ await sag(agencies.filter(a=>a.id!==id)); toast_("삭제"); };
-  const doIO = async({type,itemId,mode,qty,sizeKey,agencyId,memo,date})=>{
+  const doIO = async({type,itemId,mode,qty,sizeKey,agencyId,memo,date,priceType,payMethod})=>{
     const n=Number(qty); if(!n||n<=0)return;
     let nu=uniforms,ne=equips;
     if(type==="uniform"){ nu=uniforms.map(u=>{ if(u.id!==itemId)return u; const sz={...(u.sizes||{})}; sz[sizeKey]=Math.max(0,Number(sz[sizeKey]||0)+(mode==="in"?n:-n)); return{...u,sizes:sz}; }); await su(nu); }
@@ -1900,7 +1900,34 @@ function InventoryPage({db}){
     const item=(type==="uniform"?uniforms:equips).find(x=>x.id===itemId);
     const ag=agencies.find(a=>a.id===agencyId);
     const nh=[{id:gid(),type,mode,itemId,itemName:item?.name||"",sizeKey:sizeKey||"",agencyId:agencyId||"",agencyName:ag?.name||"",qty:n,memo:memo||"",date:date||td()},...invHist];
-    await sih(nh); toast_(mode==="in"?`입고 +${n}`:`출고 -${n}`);
+    await sih(nh);
+    // ── 출고 시 매출 자동 등록 ──
+    if(mode==="out"){
+      const PKEYS={대리점가:"agencyPrice",단체복가:"shopPrice",인터넷최저가:"netPrice",도매가:"friendPrice"};
+      const pk=PKEYS[priceType]||"";
+      const unitSale = pk&&item ? Number(item[pk]||0) : 0;
+      const unitCost = item ? Number(item.costPrice||0) : 0;
+      const saleEntry={
+        id:gid(), source:"출고", date:date||td(),
+        customer: ag?.name||"거래처 없음", agencyId:agencyId||"",
+        orderType: type==="uniform"?"단품판매":"용품판매",
+        itemName: item?.name||"",
+        sizeKey: sizeKey||"",
+        qty: n,
+        detail: `${item?.name||""}${sizeKey?" "+sizeKey:""} ${n}${type==="uniform"?"벌":"개"}`,
+        sales: unitSale*n,
+        cost: unitCost*n,
+        priceType: priceType||"",
+        payMethod: payMethod||"미정",
+        paid:false, tracking:"", memo:memo||"",
+        isDelivery:false,
+      };
+      if(type==="uniform") await sus([saleEntry,...uSales]);
+      else await ses([saleEntry,...eSales]);
+      toast_(`📤 출고 완료 — ${item?.name||""||(sizeKey?" "+sizeKey:"")} ${n}${type==="uniform"?"벌":"개"} · 매출 자동 등록`);
+    } else {
+      toast_(mode==="in"?`입고 +${n}`:`출고 -${n}`);
+    }
   };
 
   // ── 다중 출고 처리 ──
@@ -1946,27 +1973,32 @@ function InventoryPage({db}){
 
     // 3) uSales 자동 생성 (autoSale=true 일 때만)
     if(autoSale){
-      const newSaleEntries = items.map((it,idx) => ({
-        id:         gid(),
-        source:     "출고",
-        date:       date || td(),
-        customer:   finalAgencyName || "거래처 없음",
-        agencyId:   finalAgencyId,
-        orderType:  "단품판매",
-        itemName:   histEntries[idx]?.itemName || "",
-        sizeKey:    it.sizeKey,
-        qty:        Number(it.qty),
-        detail:     `${histEntries[idx]?.itemName||""} ${it.sizeKey} ${it.qty}벌`,
-        sales:      it.sales  || 0,
-        cost:       it.cost   || 0,
-        priceType:  it.priceType || "",
-        payMethod:  it.payMethod || "미정",
-        paid:       false,
-        tracking:   "",
-        memo:       memo || "",
-        recipient:  recipient?.name ? recipient : null,
-        isDelivery: !!(recipient?.name),
-      })).filter(x=>x.itemName);
+      // histEntries 기반으로 매핑 (qty=0 건너뛴 항목과 인덱스 일치 보장)
+      const newSaleEntries = histEntries.map(h => {
+        // 원본 items에서 같은 itemId+sizeKey 찾아 단가 정보 가져오기
+        const origItem = items.find(x => x.itemId===h.itemId && x.sizeKey===h.sizeKey);
+        return {
+          id:         gid(),
+          source:     "출고",
+          date:       date || td(),
+          customer:   finalAgencyName || "거래처 없음",
+          agencyId:   finalAgencyId,
+          orderType:  "단품판매",
+          itemName:   h.itemName,
+          sizeKey:    h.sizeKey,
+          qty:        h.qty,
+          detail:     `${h.itemName} ${h.sizeKey} ${h.qty}벌`,
+          sales:      origItem?.sales  || 0,
+          cost:       origItem?.cost   || 0,
+          priceType:  origItem?.priceType || "",
+          payMethod:  origItem?.payMethod || "미정",
+          paid:       false,
+          tracking:   "",
+          memo:       memo || "",
+          recipient:  recipient?.name ? recipient : null,
+          isDelivery: !!(recipient?.name),
+        };
+      }).filter(x => x.itemName);
       await sus([...newSaleEntries, ...uSales]);
       toast_(`📤 출고 완료 — ${histEntries.length}종 총 ${totalQty}벌 · 매출 ${newSaleEntries.length}건 자동 등록`);
     } else {
@@ -2855,16 +2887,55 @@ function MultiOutModal({initItem, uniforms, agencies, onClose, onSave}){
 
 function IOModal({modal,agencies,onClose,onSave}){
   const {type,item,mode}=modal;
-  const [sizeKey,setSK]=useState(type==="uniform"?Object.keys(item.sizes||{})[0]||"":"");
-  const [qty,setQty]=useState(1); const [agencyId,setAg]=useState(""); const [memo,setMemo]=useState(""); const [date,setDate]=useState(td());
-  const mc=mode==="in"?"#3b82f6":"#f87171";
+  const PRICE_KEYS = type==="uniform"
+    ? [{k:"agencyPrice",l:"대리점가"},{k:"shopPrice",l:"단체복가"},{k:"netPrice",l:"인터넷최저가"},{k:"friendPrice",l:"도매가"}]
+    : [];
+  const PAY_METHODS = ["계좌이체","카드","현금","무통장","미정"];
+  const [sizeKey,  setSK]   = useState(type==="uniform"?Object.keys(item.sizes||{})[0]||"":" ");
+  const [qty,      setQty]  = useState(1);
+  const [agencyId, setAg]   = useState("");
+  const [priceType,setPT]   = useState(PRICE_KEYS[0]?.l||"");
+  const [payMethod,setPM]   = useState("미정");
+  const [memo,     setMemo] = useState("");
+  const [date,     setDate] = useState(td());
+
+  const selPK  = PRICE_KEYS.find(p=>p.l===priceType)?.k||"";
+  const unitP  = selPK ? Number(item[selPK]||0) : 0;
+  const totalP = unitP * Number(qty||0);
+  const unitC  = Number(item.costPrice||0);
+  const totalC = unitC * Number(qty||0);
+  const mc = mode==="in"?"#3b82f6":"#f87171";
+  const stock = type==="uniform" ? (item.sizes?.[sizeKey]||0) : (item.stock||0);
+
   return <Modal title={`${item.name} — ${mode==="in"?"📥 입고":"📤 출고"}`} onClose={onClose}>
+    <div style={{background:"#0d1117",border:"1px solid #1e293b",borderRadius:8,padding:"8px 12px",marginBottom:12,fontSize:12}}>
+      <span style={{color:"#64748b"}}>현재 재고: </span>
+      <b style={{color:stock<=5?"#ef4444":"#f1f5f9"}}>{stock}{type==="uniform"?"벌":"개"}</b>
+      {type==="uniform"&&sizeKey&&<span style={{color:"#64748b",marginLeft:6}}>({sizeKey})</span>}
+    </div>
     <MFR label="날짜"><input type="date" style={GS.inp} value={date} onChange={e=>setDate(e.target.value)}/></MFR>
     {type==="uniform"&&<MFR label="사이즈"><div style={GS.chips}>{Object.keys(item.sizes||{}).map(sz=><div key={sz} style={{...SI.chip,...(sizeKey===sz?SI.chipA:{})}} onClick={()=>setSK(sz)}>{sz} <span style={{color:"#64748b",fontSize:10}}>({item.sizes[sz]})</span></div>)}</div></MFR>}
     <MFR label="수량"><div style={{display:"flex",alignItems:"center",gap:8}}><button style={{width:34,height:34,borderRadius:7,background:"#1e293b",border:"1px solid #334155",color:"white",cursor:"pointer",fontSize:16}} onClick={()=>setQty(p=>Math.max(1,Number(p)-1))}>−</button><input type="number" style={{...GS.inp,width:70,textAlign:"center",fontSize:18,fontWeight:700}} min={1} value={qty} onChange={e=>setQty(e.target.value)}/><button style={{width:34,height:34,borderRadius:7,background:"#1e293b",border:"1px solid #334155",color:"white",cursor:"pointer",fontSize:16}} onClick={()=>setQty(p=>Number(p)+1)}>+</button></div></MFR>
-    {mode==="out"&&<MFR label="거래처(대리점)"><select style={GS.inp} value={agencyId} onChange={e=>setAg(e.target.value)}><option value="">— 선택 안 함 —</option>{agencies.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></MFR>}
+    {mode==="out"&&<>
+      <MFR label="거래처">
+        <select style={GS.inp} value={agencyId} onChange={e=>setAg(e.target.value)}>
+          <option value="">— 선택 안 함 —</option>
+          {agencies.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}
+        </select>
+      </MFR>
+      {type==="uniform"&&PRICE_KEYS.length>0&&<MFR label="단가 기준">
+        <div style={GS.chips}>
+          {PRICE_KEYS.map(p=><div key={p.k} style={{...SI.chip,...(priceType===p.l?SI.chipA:{})}} onClick={()=>setPT(p.l)}>
+            {p.l}{Number(item[p.k]||0)>0&&<span style={{color:priceType===p.l?"#bfdbfe":"#64748b",fontSize:10,marginLeft:3}}>({won(item[p.k])})</span>}
+          </div>)}
+          <div style={{...SI.chip,...(priceType===""?SI.chipA:{})}} onClick={()=>setPT("")}>입력없음</div>
+        </div>
+        {totalP>0&&<div style={{marginTop:6,fontSize:12,color:"#f59e0b",fontWeight:600}}>예상 매출: {won(totalP)} (원가: {won(totalC)} / 순이익: {won(totalP-totalC)})</div>}
+      </MFR>}
+      <MFR label="결제 수단"><div style={GS.chips}>{PAY_METHODS.map(m=><div key={m} style={{...SI.chip,...(payMethod===m?SI.chipA:{})}} onClick={()=>setPM(m)}>{m}</div>)}</div></MFR>
+    </>}
     <MFR label="메모"><input style={GS.inp} value={memo} onChange={e=>setMemo(e.target.value)} placeholder="특이사항"/></MFR>
-    <div style={GS.mBtns}><SBtn onClick={()=>onSave({type,itemId:item.id,mode,qty,sizeKey,agencyId,memo,date})} color={mc} full>{mode==="in"?"📥 입고":"📤 출고"} 처리</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
+    <div style={GS.mBtns}><SBtn onClick={()=>onSave({type,itemId:item.id,mode,qty:Number(qty),sizeKey,agencyId,priceType,payMethod,memo,date})} color={mc} full>{mode==="in"?"📥 입고":"📤 출고"} 처리</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
   </Modal>;
 }
 
@@ -3001,7 +3072,7 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
    MODULE 3 — SALES
 ═══════════════════════════════════════════════════════ */
 function SalesPage({db}){
-  const {uSales,eSales,customers,templates,sus,ses,toast_,groupOrders,uniforms}=db;
+  const {uSales,eSales,agencies=[],customers=[],templates,sus,ses,toast_,groupOrders,uniforms}=db;
   const [tab,setTab]=useState("dashboard");
   const [addMod,setAdd]=useState(null);
   const [editMod,setEdit]=useState(null);
@@ -3035,9 +3106,18 @@ function SalesPage({db}){
         </div>
       </div>
       <div style={{display:"flex",gap:6,marginBottom:14}}>
-        {[["dashboard","📈 대시보드"],["uniform","👕 유니폼"],["equip","🏓 용품"],["groupsale","🏆 단체복"],["delivery","🚚 직배"],["unpaid","⚠️ 미수금"]].map(([k,l])=>(
-          <div key={k} style={{padding:"7px 14px",borderRadius:8,background:tab===k?"#1e293b":"transparent",border:tab===k?"1px solid #f59e0b":"1px solid #334155",color:tab===k?"#f1f5f9":"#64748b",cursor:"pointer",fontSize:12,fontWeight:500}} onClick={()=>setTab(k)}>{l}</div>
-        ))}
+        {(()=>{
+          const uCnt=uSales.length, eCnt=eSales.length;
+          const gCnt=uSales.filter(s=>s.orderType==="단체복 등판 제작"||s.source==="단체복주문").length;
+          const dCnt=uSales.filter(s=>s.isDelivery||s.recipient?.name).length;
+          const upCnt=[...uSales,...eSales].filter(s=>!s.paid).length;
+          const counts={dashboard:"",uniform:uCnt>0?` (${uCnt})`:"",equip:eCnt>0?` (${eCnt})`:"",groupsale:gCnt>0?` (${gCnt})`:"",delivery:dCnt>0?` (${dCnt})`:"",unpaid:upCnt>0?` (${upCnt})`:""};
+          return [["dashboard","📈 대시보드"],["uniform","👕 유니폼"],["equip","🏓 용품"],["groupsale","🏆 단체복"],["delivery","🚚 직배"],["unpaid","⚠️ 미수금"]].map(([k,l])=>(
+            <div key={k} style={{padding:"7px 14px",borderRadius:8,background:tab===k?"#1e293b":"transparent",border:tab===k?"1px solid #f59e0b":(k==="unpaid"&&upCnt>0?"1px solid #ef4444":"1px solid #334155"),color:tab===k?"#f1f5f9":(k==="unpaid"&&upCnt>0?"#fca5a5":"#64748b"),cursor:"pointer",fontSize:12,fontWeight:500,position:"relative"}} onClick={()=>setTab(k)}>
+              {l}{counts[k]&&<span style={{fontSize:10,opacity:0.8}}>{counts[k]}</span>}
+            </div>
+          ));
+        })()}
       </div>
       {tab==="dashboard"&&<SalesDashboard uSales={uSales} eSales={eSales} groupOrders={groupOrders||[]}/>}
       {tab==="uniform"&&<SalesTable type="uniform" sales={uSales} onEdit={r=>setEdit({type:"uniform",data:r})} onDel={id=>delSale("uniform",id)} onToggle={id=>togPaid("uniform",id)}/>}
@@ -3266,6 +3346,7 @@ function SalesTable({type,sales,onEdit,onDel,onToggle}){
   {s.source==="출고"&&<span style={{background:"rgba(16,185,129,0.15)",border:"1px solid #10b981",color:"#6ee7b7",fontSize:9,padding:"1px 5px",borderRadius:3,marginRight:4}}>출고</span>}
   {s.isDelivery&&<span style={{background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",color:"#fcd34d",fontSize:9,padding:"1px 5px",borderRadius:3,marginRight:4}}>직배</span>}
   {s.detail||"-"}</span>
+              <span style={{textAlign:"center",fontSize:12,color:"#cbd5e1",fontWeight:600}}>{s.qty||"-"}{s.sizeKey?<span style={{fontSize:10,color:"#64748b",marginLeft:3}}>({s.sizeKey})</span>:null}</span>
               <span style={{textAlign:"right",fontWeight:600,color:"#f59e0b",fontSize:12}}>{fmt(s.sales)}</span>
               <span style={{textAlign:"right",color:"#64748b",fontSize:12}}>{fmt(s.cost)}</span>
               <span style={{textAlign:"right",fontWeight:600,color:prof>=0?"#10b981":"#ef4444",fontSize:12}}>{fmt(prof)}</span>
