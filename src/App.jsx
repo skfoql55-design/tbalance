@@ -1904,7 +1904,7 @@ function InventoryPage({db}){
   };
 
   // ── 다중 출고 처리 ──
-  const doMultiOut = async({items, agencyId, newAgency, recipient, memo, date}) => {
+  const doMultiOut = async({items, agencyId, newAgency, recipient, autoSale=true, memo, date}) => {
     // 1) 신규 거래처 자동 등록
     let finalAgencyId = agencyId || "";
     let finalAgencyName = agencies.find(a=>a.id===agencyId)?.name || "";
@@ -1943,7 +1943,35 @@ function InventoryPage({db}){
     }
     await su(nu);
     await sih([...histEntries, ...invHist]);
-    toast_(`📤 출고 완료 — ${histEntries.length}종 총 ${totalQty}벌`);
+
+    // 3) uSales 자동 생성 (autoSale=true 일 때만)
+    if(autoSale){
+      const newSaleEntries = items.map((it,idx) => ({
+        id:         gid(),
+        source:     "출고",
+        date:       date || td(),
+        customer:   finalAgencyName || "거래처 없음",
+        agencyId:   finalAgencyId,
+        orderType:  "단품판매",
+        itemName:   histEntries[idx]?.itemName || "",
+        sizeKey:    it.sizeKey,
+        qty:        Number(it.qty),
+        detail:     `${histEntries[idx]?.itemName||""} ${it.sizeKey} ${it.qty}벌`,
+        sales:      it.sales  || 0,
+        cost:       it.cost   || 0,
+        priceType:  it.priceType || "",
+        payMethod:  it.payMethod || "미정",
+        paid:       false,
+        tracking:   "",
+        memo:       memo || "",
+        recipient:  recipient?.name ? recipient : null,
+        isDelivery: !!(recipient?.name),
+      })).filter(x=>x.itemName);
+      await sus([...newSaleEntries, ...uSales]);
+      toast_(`📤 출고 완료 — ${histEntries.length}종 총 ${totalQty}벌 · 매출 ${newSaleEntries.length}건 자동 등록`);
+    } else {
+      toast_(`📤 출고 완료 — ${histEntries.length}종 총 ${totalQty}벌`);
+    }
   };
 
   // ── CSV 파싱 헬퍼 ──
@@ -2554,10 +2582,12 @@ function MultiOutModal({initItem, uniforms, agencies, onClose, onSave}){
   // ── 직배(받는사람) 정보 — 거래처 저장 X ──
   const [rcpt, setRcpt] = useState({name:"",phone:"",address:""});
   const [showRcpt, setShowRcpt] = useState(false);
+  const [payMethod, setPayMethod] = useState("미정");
+  const [autoSale,  setAutoSale]  = useState(true);  // 출고 시 매출 자동 등록 여부
   // ── 출고 품목 목록 ──
   const firstSz = initItem ? Object.keys(initItem.sizes||{})[0]||"" : "";
   const [items, setItems] = useState(
-    initItem ? [{lid:gid(), itemId:initItem.id, sizeKey:firstSz, qty:1}] : []
+    initItem ? [{lid:gid(), itemId:initItem.id, sizeKey:firstSz, qty:1, priceType:""}] : []
   );
   const [memo, setMemo] = useState("");
   const [err,  setErr]  = useState("");
@@ -2565,7 +2595,7 @@ function MultiOutModal({initItem, uniforms, agencies, onClose, onSave}){
   const addItem = () => {
     const first = uniforms[0];
     const sz = first ? Object.keys(first.sizes||{})[0]||"" : "";
-    setItems(p=>[...p, {lid:gid(), itemId:first?.id||"", sizeKey:sz, qty:1}]);
+    setItems(p=>[...p, {lid:gid(), itemId:first?.id||"", sizeKey:sz, qty:1, priceType:""}]);
   };
   const removeItem = lid => setItems(p=>p.filter(x=>x.lid!==lid));
   const updateItem = (lid,key,val) => setItems(p=>p.map(x=>x.lid===lid?{...x,[key]:val}:x));
@@ -2590,10 +2620,24 @@ function MultiOutModal({initItem, uniforms, agencies, onClose, onSave}){
     }
     if(agMode==="new" && !newAg.name.trim()){ setErr("신규 거래처명을 입력하세요."); return; }
     onSave({
-      items: items.map(x=>({itemId:x.itemId,sizeKey:x.sizeKey,qty:Number(x.qty)})),
-      agencyId: agMode==="existing" ? agencyId : "",
+      items: items.map(x=>{
+        const uni = uniforms.find(u=>u.id===x.itemId);
+        const PKEYS = {대리점가:"agencyPrice",단체복가:"shopPrice",인터넷최저가:"netPrice",도매가:"friendPrice"};
+        const pk    = PKEYS[x.priceType] || "";
+        const unitSale = pk && uni ? Number(uni[pk]||0) : 0;
+        const unitCost = uni ? Number(uni.costPrice||0) : 0;
+        return {
+          itemId: x.itemId, sizeKey: x.sizeKey, qty: Number(x.qty),
+          priceType: x.priceType,
+          sales: unitSale * Number(x.qty),
+          cost:  unitCost * Number(x.qty),
+          payMethod,
+        };
+      }),
+      agencyId:  agMode==="existing" ? agencyId : "",
       newAgency: agMode==="new" ? newAg : null,
       recipient: showRcpt ? rcpt : null,
+      autoSale,
       memo, date
     });
   };
@@ -2730,19 +2774,69 @@ function MultiOutModal({initItem, uniforms, agencies, onClose, onSave}){
                 {over && <div style={{fontSize:9,color:"#ef4444",marginTop:2}}>재고 {stk}벌 초과</div>}
                 {!over && stk>0 && <div style={{fontSize:9,color:"#475569",marginTop:2}}>재고 {stk}벌</div>}
               </div>
+              {/* 단가 유형 */}
+              <div style={{minWidth:80}}>
+                <div style={{fontSize:10,color:"#64748b",marginBottom:3}}>단가</div>
+                <select style={{...selSt,width:80}} value={it.priceType}
+                  onChange={e=>updateItem(it.lid,"priceType",e.target.value)}>
+                  <option value="">미입력</option>
+                  {["대리점가","단체복가","인터넷최저가","도매가"].map(p=>{
+                    const PKEYS={대리점가:"agencyPrice",단체복가:"shopPrice",인터넷최저가:"netPrice",도매가:"friendPrice"};
+                    const uni=uniforms.find(u=>u.id===it.itemId);
+                    const v=uni?Number(uni[PKEYS[p]]||0):0;
+                    return <option key={p} value={p}>{p}{v>0?` ${v.toLocaleString()}`:" —"}</option>;
+                  })}
+                </select>
+                {(()=>{
+                  const PKEYS={대리점가:"agencyPrice",단체복가:"shopPrice",인터넷최저가:"netPrice",도매가:"friendPrice"};
+                  const uni=uniforms.find(u=>u.id===it.itemId);
+                  const pk=PKEYS[it.priceType];
+                  const v=pk&&uni?Number(uni[pk]||0)*Number(it.qty):0;
+                  return v>0?<div style={{fontSize:9,color:"#f59e0b",marginTop:2}}>{v.toLocaleString()}원</div>:null;
+                })()}
+              </div>
               {/* 삭제 */}
               <button onClick={()=>removeItem(it.lid)} style={{background:"#7f1d1d",border:"none",color:"white",borderRadius:6,padding:"0 8px",height:32,cursor:"pointer",fontSize:14,alignSelf:"flex-end",marginBottom:0}}>✕</button>
             </div>
           );
         })}
         {/* 합계 */}
-        {items.length>0 && (
-          <div style={{textAlign:"right",fontSize:12,color:"#94a3b8",marginTop:4}}>
-            총 {items.length}종 {items.reduce((a,x)=>a+Number(x.qty||0),0)}벌
-          </div>
-        )}
+        {items.length>0 && (()=>{
+          const totalQty  = items.reduce((a,x)=>a+Number(x.qty||0),0);
+          const PKEYS={대리점가:"agencyPrice",단체복가:"shopPrice",인터넷최저가:"netPrice",도매가:"friendPrice"};
+          const totalAmt  = items.reduce((a,x)=>{
+            const uni=uniforms.find(u=>u.id===x.itemId);
+            const pk=PKEYS[x.priceType];
+            return a+(pk&&uni?Number(uni[pk]||0)*Number(x.qty||0):0);
+          },0);
+          return (
+            <div style={{display:"flex",justifyContent:"flex-end",gap:12,fontSize:12,color:"#94a3b8",marginTop:4}}>
+              <span>총 {items.length}종 {totalQty}벌</span>
+              {totalAmt>0&&<span style={{color:"#f59e0b",fontWeight:600}}>예상 매출 {totalAmt.toLocaleString()}원</span>}
+            </div>
+          );
+        })()}
       </div>
 
+      {/* 결제수단 */}
+      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:4}}>
+        <MFR label="결제수단">
+          <select style={GS.inp} value={payMethod} onChange={e=>setPayMethod(e.target.value)}>
+            {["미정","계좌이체","카드","현금","기타"].map(m=><option key={m}>{m}</option>)}
+          </select>
+        </MFR>
+        <MFR label="매출 자동 등록">
+          <div style={{display:"flex",alignItems:"center",gap:8,height:42}}>
+            <button onClick={()=>setAutoSale(p=>!p)} style={{
+              width:42,height:24,borderRadius:12,border:"none",cursor:"pointer",
+              background:autoSale?"#10b981":"#374151",position:"relative",transition:"background .2s"
+            }}>
+              <span style={{position:"absolute",top:2,left:autoSale?18:2,width:20,height:20,borderRadius:"50%",background:"white",transition:"left .2s"}}/>
+            </button>
+            <span style={{fontSize:12,color:autoSale?"#6ee7b7":"#64748b"}}>{autoSale?"자동 등록":"수동 등록"}</span>
+          </div>
+        </MFR>
+      </div>
       {/* 메모 */}
       <MFR label="메모">
         <input style={GS.inp} value={memo} onChange={e=>setMemo(e.target.value)} placeholder="특이사항 (선택)"/>
@@ -2941,13 +3035,14 @@ function SalesPage({db}){
         </div>
       </div>
       <div style={{display:"flex",gap:6,marginBottom:14}}>
-        {[["dashboard","📈 대시보드"],["uniform","👕 유니폼"],["equip","🏓 용품"],["unpaid","⚠️ 미수금"]].map(([k,l])=>(
+        {[["dashboard","📈 대시보드"],["uniform","👕 유니폼"],["equip","🏓 용품"],["delivery","🚚 직배"],["unpaid","⚠️ 미수금"]].map(([k,l])=>(
           <div key={k} style={{padding:"7px 14px",borderRadius:8,background:tab===k?"#1e293b":"transparent",border:tab===k?"1px solid #f59e0b":"1px solid #334155",color:tab===k?"#f1f5f9":"#64748b",cursor:"pointer",fontSize:12,fontWeight:500}} onClick={()=>setTab(k)}>{l}</div>
         ))}
       </div>
       {tab==="dashboard"&&<SalesDashboard uSales={uSales} eSales={eSales} groupOrders={groupOrders||[]}/>}
       {tab==="uniform"&&<SalesTable type="uniform" sales={uSales} onEdit={r=>setEdit({type:"uniform",data:r})} onDel={id=>delSale("uniform",id)} onToggle={id=>togPaid("uniform",id)}/>}
       {tab==="equip"&&<SalesTable type="equip" sales={eSales} onEdit={r=>setEdit({type:"equip",data:r})} onDel={id=>delSale("equip",id)} onToggle={id=>togPaid("equip",id)}/>}
+      {tab==="delivery"&&<DeliveryTab uSales={uSales} onToggle={togPaid} onEdit={r=>setEdit({type:"uniform",data:r})} onDel={id=>delSale("uniform",id)}/>}
       {tab==="unpaid"&&<UnpaidTab uSales={uSales} eSales={eSales} onToggle={togPaid}/>}
       {addMod&&<SaleMod type={addMod} uniforms={uniforms||[]} onClose={()=>setAdd(null)} onSave={d=>{addSale(addMod,d);setAdd(null);}}/>}
       {editMod&&<SaleMod type={editMod.type} uniforms={uniforms||[]} initial={editMod.data} onClose={()=>setEdit(null)} onSave={d=>{updSale(editMod.type,{...editMod.data,...d});setEdit(null);}}/>}
@@ -3166,7 +3261,10 @@ function SalesTable({type,sales,onEdit,onDel,onToggle}){
               <span style={{fontSize:11,color:"#94a3b8"}}>{s.date}</span>
               <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.customer||"-"}</span>
               <span style={{fontSize:10}}><span style={{background:"#1d4ed8",color:"white",padding:"1px 5px",borderRadius:3}}>{s.orderType||"-"}</span></span>
-              <span style={{fontSize:11,color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.detail||"-"}</span>
+              <span style={{fontSize:11,color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+  {s.source==="출고"&&<span style={{background:"rgba(16,185,129,0.15)",border:"1px solid #10b981",color:"#6ee7b7",fontSize:9,padding:"1px 5px",borderRadius:3,marginRight:4}}>출고</span>}
+  {s.isDelivery&&<span style={{background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",color:"#fcd34d",fontSize:9,padding:"1px 5px",borderRadius:3,marginRight:4}}>직배</span>}
+  {s.detail||"-"}</span>
               <span style={{textAlign:"right",fontWeight:600,color:"#f59e0b",fontSize:12}}>{fmt(s.sales)}</span>
               <span style={{textAlign:"right",color:"#64748b",fontSize:12}}>{fmt(s.cost)}</span>
               <span style={{textAlign:"right",fontWeight:600,color:prof>=0?"#10b981":"#ef4444",fontSize:12}}>{fmt(prof)}</span>
@@ -3181,6 +3279,111 @@ function SalesTable({type,sales,onEdit,onDel,onToggle}){
     </div>
   );
 }
+/* ── 직배 탭 컴포넌트 ── */
+function DeliveryTab({uSales, onToggle, onEdit, onDel}){
+  const [yr,  setYr]  = useState(new Date().getFullYear());
+  const [mo,  setMo]  = useState("");
+  const [q,   setQ]   = useState("");
+  const [expanded, setExpanded] = useState(null); // 펼쳐진 row id
+
+  const deliveries = useMemo(()=>
+    uSales.filter(s=>s.isDelivery||s.recipient?.name)
+  ,[uSales]);
+
+  const fil = useMemo(()=>deliveries.filter(s=>{
+    const y=s.date?.startsWith(String(yr));
+    const m=mo?s.date?.startsWith(`${yr}-${String(mo).padStart(2,"0")}`):y;
+    const sq=!q||(s.customer||"").includes(q)||(s.recipient?.name||"").includes(q)||(s.detail||"").includes(q);
+    return m&&sq;
+  }),[deliveries,yr,mo,q]);
+
+  const totS=fil.reduce((a,s)=>a+Number(s.sales||0),0);
+
+  if(deliveries.length===0) return <EmptyState icon="🚚" msg="직배 내역 없음" sub="출고 처리 시 직배 배송 정보를 입력하면 여기에 표시됩니다"/>;
+
+  return(
+    <div>
+      <div style={GS.toolbar}>
+        <select style={GS.sSel} value={yr} onChange={e=>setYr(Number(e.target.value))}>
+          {[2023,2024,2025,2026,2027].map(y=><option key={y}>{y}</option>)}
+        </select>
+        <select style={GS.sSel} value={mo} onChange={e=>setMo(e.target.value)}>
+          <option value="">전체</option>
+          {MONTHS.map((m,i)=><option key={i+1} value={String(i+1).padStart(2,"0")}>{m}</option>)}
+        </select>
+        <input style={{...GS.sInp,flex:1,maxWidth:200}} placeholder="거래처·받는사람 검색..."
+          value={q} onChange={e=>setQ(e.target.value)}/>
+        <SumPill label="직배 매출" val={won(totS)} color="#f59e0b"/>
+        <SumPill label="건수"      val={fil.length+"건"} color="#3b82f6"/>
+      </div>
+
+      {fil.length===0?<EmptyState icon="🔍" msg="검색 결과 없음"/>:
+        <div style={GS.tbl}>
+          {/* 헤더 */}
+          <div style={{display:"grid",gridTemplateColumns:"88px 110px 1fr 90px 75px 70px 90px 80px",gap:6,padding:"8px 14px",background:"#0b0f1a",fontSize:10,fontWeight:600,color:"#64748b"}}>
+            <span>날짜</span><span>거래처</span><span>품목 내역</span>
+            <span style={{textAlign:"right"}}>매출</span><span style={{textAlign:"right"}}>원가</span>
+            <span style={{textAlign:"center"}}>결제</span><span style={{textAlign:"center"}}>입금</span>
+            <span style={{textAlign:"center"}}>관리</span>
+          </div>
+
+          {fil.map(s=>{
+            const rcp = s.recipient||{};
+            const isOpen = expanded===s.id;
+            const prof = Number(s.sales||0)-Number(s.cost||0);
+            return(
+              <div key={s.id}>
+                {/* 메인 row */}
+                <div style={{display:"grid",gridTemplateColumns:"88px 110px 1fr 90px 75px 70px 90px 80px",gap:6,padding:"9px 14px",alignItems:"center",borderTop:"1px solid #1e293b",fontSize:12,cursor:"pointer",background:isOpen?"rgba(245,158,11,0.04)":"transparent"}}
+                  onClick={()=>setExpanded(p=>p===s.id?null:s.id)}>
+                  <span style={{fontSize:11,color:"#94a3b8"}}>{s.date}</span>
+                  <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.customer||"-"}</span>
+                  <span style={{fontSize:11,color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    <span style={{background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",color:"#fcd34d",fontSize:9,padding:"1px 5px",borderRadius:3,marginRight:4}}>직배</span>
+                    {s.detail||"-"}
+                    <span style={{marginLeft:6,fontSize:9,color:"#475569"}}>{isOpen?"▲":"▼"}</span>
+                  </span>
+                  <span style={{textAlign:"right",fontWeight:600,color:"#f59e0b",fontSize:12}}>{fmt(s.sales)}</span>
+                  <span style={{textAlign:"right",color:"#64748b",fontSize:12}}>{fmt(s.cost)}</span>
+                  <span style={{textAlign:"center"}}><PayTag method={s.payMethod}/></span>
+                  <span style={{textAlign:"center"}}><PaidBtn paid={s.paid} onClick={e=>{e.stopPropagation();onToggle(s.id);}}/></span>
+                  <div style={{display:"flex",gap:3,justifyContent:"center"}} onClick={e=>e.stopPropagation()}>
+                    <MBtn onClick={()=>onEdit(s)}>수정</MBtn>
+                    <MBtn red onClick={()=>onDel(s.id)}>삭제</MBtn>
+                  </div>
+                </div>
+
+                {/* 직배 배송 정보 펼침 */}
+                {isOpen && (
+                  <div style={{background:"rgba(245,158,11,0.06)",borderTop:"1px solid rgba(245,158,11,0.15)",padding:"10px 16px 12px",marginLeft:0}}>
+                    <div style={{fontSize:10,color:"#f59e0b",fontWeight:600,marginBottom:8}}>🚚 직배 배송 정보</div>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:8}}>
+                      <div>
+                        <div style={{fontSize:9,color:"#64748b",marginBottom:2}}>받는사람</div>
+                        <div style={{fontSize:12,color:"#f1f5f9",fontWeight:500}}>{rcp.name||"—"}</div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:9,color:"#64748b",marginBottom:2}}>연락처</div>
+                        <div style={{fontSize:12,color:"#f1f5f9"}}>{rcp.phone||"—"}</div>
+                      </div>
+                      <div>
+                        <div style={{fontSize:9,color:"#64748b",marginBottom:2}}>주소</div>
+                        <div style={{fontSize:12,color:"#f1f5f9"}}>{rcp.address||"—"}</div>
+                      </div>
+                    </div>
+                    {s.memo&&<div style={{marginTop:8,fontSize:11,color:"#64748b"}}>메모: {s.memo}</div>}
+                    {s.tracking&&<div style={{marginTop:4,fontSize:11,color:"#64748b"}}>송장번호: {s.tracking}</div>}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      }
+    </div>
+  );
+}
+
 function UnpaidTab({uSales,eSales,onToggle}){
   const rows=useMemo(()=>[...uSales.filter(s=>!s.paid).map(s=>({...s,_t:"uniform"})),...eSales.filter(s=>!s.paid).map(s=>({...s,_t:"equip"}))].sort((a,b)=>a.date>b.date?-1:1),[uSales,eSales]);
   const total=rows.reduce((a,s)=>a+Number(s.sales||0),0);
@@ -3197,7 +3400,10 @@ function UnpaidTab({uSales,eSales,onToggle}){
           <span style={{fontSize:11,color:"#94a3b8"}}>{s.date}</span>
           <span style={{background:s._t==="uniform"?"#1d4ed8":"#064e3b",color:"white",padding:"1px 6px",borderRadius:3,fontSize:10}}>{s._t==="uniform"?"유니폼":"용품"}</span>
           <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.customer||"-"}</span>
-          <span style={{fontSize:11,color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.detail||"-"}</span>
+          <span style={{fontSize:11,color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+  {s.source==="출고"&&<span style={{background:"rgba(16,185,129,0.15)",border:"1px solid #10b981",color:"#6ee7b7",fontSize:9,padding:"1px 5px",borderRadius:3,marginRight:4}}>출고</span>}
+  {s.isDelivery&&<span style={{background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",color:"#fcd34d",fontSize:9,padding:"1px 5px",borderRadius:3,marginRight:4}}>직배</span>}
+  {s.detail||"-"}</span>
           <span style={{textAlign:"right",fontWeight:700,color:"#ef4444"}}>{fmt(s.sales)}</span>
           <span><PayTag method={s.payMethod}/></span>
           <div style={{textAlign:"center"}}><MBtn onClick={()=>onToggle(s._t,s.id)}>✓ 입금확인</MBtn></div>
