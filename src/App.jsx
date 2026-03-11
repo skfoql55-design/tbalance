@@ -250,7 +250,6 @@ function LoginScreen({ onLogin }) {
   const [err, setErr]         = useState("");
   const mockCode = "1234";
 
-  // SDK 미리 로드
   useEffect(() => { loadKakaoSDK(); }, []);
 
   const sendCode = () => {
@@ -275,32 +274,17 @@ function LoginScreen({ onLogin }) {
       window.Kakao.Auth.login({
         success: async (authObj) => {
           try {
-            // 사용자 정보 요청
             window.Kakao.API.request({
               url: "/v2/user/me",
               success: (res) => {
                 const profile = res.kakao_account?.profile;
                 const name = profile?.nickname || "카카오 사용자";
                 const avatar = profile?.profile_image_url || "🟡";
-                onLogin({
-                  name,
-                  avatar,
-                  phone: "",
-                  loginAt: new Date().toISOString(),
-                  provider: "kakao",
-                  kakaoId: res.id,
-                });
+                onLogin({ name, avatar, phone: "", loginAt: new Date().toISOString(), provider: "kakao", kakaoId: res.id });
                 setLoading(false);
               },
               fail: () => {
-                // 프로필 못가져와도 로그인은 허용
-                onLogin({
-                  name: "카카오 사용자",
-                  avatar: "🟡",
-                  phone: "",
-                  loginAt: new Date().toISOString(),
-                  provider: "kakao",
-                });
+                onLogin({ name: "카카오 사용자", avatar: "🟡", phone: "", loginAt: new Date().toISOString(), provider: "kakao" });
                 setLoading(false);
               }
             });
@@ -323,38 +307,30 @@ function LoginScreen({ onLogin }) {
   return (
     <div style={LS.bg}>
       <div style={LS.card}>
-        {/* LOGO */}
         <div style={LS.logoArea}>
           <div style={LS.logoIcon}>🏓</div>
           <div style={LS.logoText}>티밸런스 관리 시스템</div>
           <div style={LS.logoSub}>단체복 주문 · 재고 · 매출 · 거래처 통합 관리</div>
         </div>
-
         {step === "main" && (
           <div style={LS.form}>
-            {/* KAKAO LOGIN */}
             <button onClick={kakaoLogin} disabled={loading} style={LS.kakaoBtn}>
               {loading ? <span>로그인 중...</span> : (
                 <>
                   <span style={LS.kakaoBtnIcon}>
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="black">
-                      <path d="M12 3C6.477 3 2 6.477 2 10.667c0 2.67 1.577 5.022 3.957 6.445L4.9 20.7a.5.5 0 00.73.553L9.5 18.96A12.26 12.26 0 0012 19.333c5.523 0 10-3.477 10-7.666C22 6.477 17.523 3 12 3z"/>
+                      <path d="M12 3C6.477 3 2 6.477 2 10.667c0 2.67 1.577 5.022 3.957 6.445L4.9 20.7a.5.5 0 00.73.553L9.5 18.96A11.56 11.56 0 0012 19.333C17.523 19.333 22 15.857 22 11.667S17.523 3 12 3z"/>
                     </svg>
                   </span>
                   카카오로 시작하기
                 </>
               )}
             </button>
-
             {err && <div style={LS.err}>{err}</div>}
-
             <div style={LS.divider}><span>또는</span></div>
-
-            {/* PHONE LOGIN */}
             <button onClick={()=>setStep("phone")} style={LS.phoneBtn}>📱 전화번호로 로그인</button>
           </div>
         )}
-
         {step === "phone" && (
           <div style={LS.form}>
             <div style={LS.stepTitle}>전화번호 입력</div>
@@ -368,11 +344,10 @@ function LoginScreen({ onLogin }) {
             <button onClick={()=>{setStep("main");setErr("");}} style={LS.backBtn}>← 돌아가기</button>
           </div>
         )}
-
         {step === "code" && (
           <div style={LS.form}>
             <div style={LS.stepTitle}>인증번호 입력</div>
-            <div style={{fontSize:12,color:"#64748b",marginBottom:10,textAlign:"center"}}>{phone}으로 발송된 4자리를 입력하세요<br/><span style={{color:"#f59e0b"}}>(데모 인증번호: 1234)</span></div>
+            <div style={{fontSize:12,color:"#64748b",marginBottom:10,textAlign:"center"}}>{phone}으로 발송된 4자리를 입력하세요<br/><span style={{color:"#f59e0b"}}>(데모: 1234)</span></div>
             <input style={{...LS.inp,textAlign:"center",fontSize:24,letterSpacing:12,fontWeight:700}} placeholder="0000"
               maxLength={4} value={code} onChange={e=>{ setCode(e.target.value); setErr(""); }}
               onKeyDown={e=>e.key==="Enter"&&verify()} autoFocus />
@@ -388,24 +363,23 @@ function LoginScreen({ onLogin }) {
   );
 }
 const LS = {
-  bg:       { display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"linear-gradient(135deg,#0b0f1a 0%,#111827 50%,#0b0f1a 100%)",fontFamily:"'Apple SD Gothic Neo','Malgun Gothic',sans-serif" },
-  card:     { background:"#111827",border:"1px solid #1e293b",borderRadius:20,padding:"40px 36px",width:"min(380px,90vw)",boxShadow:"0 25px 60px rgba(0,0,0,0.6)" },
+  bg:       { display:"flex",alignItems:"center",justifyContent:"center",minHeight:"100vh",background:"linear-gradient(135deg,#0b0f1a 0%,#0d1117 50%,#0b0f1a 100%)" },
+  card:     { background:"#111827",border:"1px solid #1e293b",borderRadius:20,padding:"40px 36px",width:"min(380px,90vw)",boxShadow:"0 25px 50px rgba(0,0,0,0.5)" },
   logoArea: { textAlign:"center",marginBottom:32 },
   logoIcon: { fontSize:52,marginBottom:10 },
   logoText: { fontSize:18,fontWeight:700,color:"#f1f5f9",letterSpacing:"-0.5px" },
   logoSub:  { fontSize:11,color:"#64748b",marginTop:5,lineHeight:1.5 },
   form:     { display:"flex",flexDirection:"column",gap:10 },
-  kakaoBtn: { display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"#FEE500",color:"#000",border:"none",borderRadius:10,padding:"13px",fontWeight:700,fontSize:14,cursor:"pointer",width:"100%",transition:"all 0.15s" },
+  kakaoBtn: { display:"flex",alignItems:"center",justifyContent:"center",gap:8,background:"#FEE500",color:"#000",border:"none",borderRadius:10,padding:"13px",fontWeight:700,fontSize:14,cursor:"pointer",boxShadow:"0 2px 8px rgba(254,229,0,0.3)" },
   kakaoBtnIcon:{ display:"flex",alignItems:"center" },
-  phoneBtn: { background:"#1e293b",color:"#e2e8f0",border:"1px solid #334155",borderRadius:10,padding:"13px",fontWeight:500,fontSize:14,cursor:"pointer",width:"100%",transition:"all 0.15s" },
-  divider:  { display:"flex",alignItems:"center",gap:10,color:"#334155",fontSize:12, "& span":{background:"#111827",padding:"0 8px"} },
+  phoneBtn: { background:"#1e293b",color:"#e2e8f0",border:"1px solid #334155",borderRadius:10,padding:"13px",fontWeight:500,fontSize:14,cursor:"pointer" },
+  divider:  { display:"flex",alignItems:"center",gap:10,color:"#334155",fontSize:12 },
   stepTitle:{ fontSize:15,fontWeight:600,color:"#f1f5f9",textAlign:"center",marginBottom:4 },
   inp:      { background:"#1e293b",border:"1px solid #334155",borderRadius:8,padding:"12px 14px",color:"#f1f5f9",fontSize:15,outline:"none",width:"100%",boxSizing:"border-box" },
-  submitBtn:{ background:"#3b82f6",color:"white",border:"none",borderRadius:8,padding:"13px",fontWeight:600,fontSize:14,cursor:"pointer",width:"100%",transition:"all 0.15s" },
+  submitBtn:{ background:"#3b82f6",color:"white",border:"none",borderRadius:8,padding:"13px",fontWeight:600,fontSize:14,cursor:"pointer" },
   backBtn:  { background:"none",color:"#64748b",border:"none",padding:"8px",cursor:"pointer",fontSize:13,width:"100%",textAlign:"center" },
   err:      { color:"#f87171",fontSize:12,textAlign:"center" },
   notice:   { fontSize:10,color:"#334155",textAlign:"center",lineHeight:1.6,marginTop:8 },
-  spinner:  { fontSize:16 },
 };
 
 /* ═══════════════════════════════════════════════════════
@@ -504,9 +478,10 @@ function MainApp({ user, onLogout }) {
                 onClick={()=>setSide(p=>!p)}>{sideOpen?"◀":"▶"}</button>
             </div>
             {sideOpen && <div style={{ display:"flex", alignItems:"center", gap:8, padding:"6px 0" }}>
-              <span style={{ fontSize:18 }}>{user.avatar||"👤"}</span>
+              {user.avatar ? <img src={user.avatar} alt="" style={{width:22,height:22,borderRadius:"50%",objectFit:"cover",verticalAlign:"middle"}} /> : <span style={{fontSize:18}}>👤</span>}
               <div>
                 <div style={{ fontSize:12, fontWeight:600, color:"#f1f5f9" }}>{user.name}</div>
+            {user.email&&<div style={{fontSize:10,color:"#64748b"}}>{user.email}</div>}
                 <div style={{ fontSize:10, color:"#64748b" }}>{user.phone||"카카오 로그인"}</div>
               </div>
             </div>}
@@ -544,9 +519,10 @@ function MainApp({ user, onLogout }) {
             display:"flex", flexDirection:"column", height:"100%", zIndex:1 }}>
             <div style={{ padding:"16px 14px", borderBottom:"1px solid #1e293b", display:"flex", alignItems:"center", justifyContent:"space-between" }}>
               <div style={{ display:"flex", alignItems:"center", gap:10 }}>
-                <span style={{ fontSize:22 }}>{user.avatar||"👤"}</span>
+                {user.avatar ? <img src={user.avatar} alt="" style={{width:28,height:28,borderRadius:"50%",objectFit:"cover"}} /> : <span style={{fontSize:22}}>👤</span>}
                 <div>
                   <div style={{ fontSize:13, fontWeight:700, color:"#f1f5f9" }}>{user.name}</div>
+              {user.email&&<div style={{fontSize:10,color:"#64748b"}}>{user.email}</div>}
                   <div style={{ fontSize:11, color:"#64748b" }}>{user.phone||"카카오 로그인"}</div>
                 </div>
               </div>
@@ -1906,6 +1882,7 @@ function InventoryPage({db}){
   const [uMod,setUM]=useState(null);
   const [eMod,setEM]=useState(null);
   const [ioMod,setIO]=useState(null);
+  const [outMod,setOM]=useState(null);  // 다중출고 모달
   const [agMod,setAM]=useState(null);
 
   const addU = async d=>{ const n=[{...d,id:gid()},...uniforms]; await su(n); toast_("유니폼 등록!"); };
@@ -1924,6 +1901,49 @@ function InventoryPage({db}){
     const ag=agencies.find(a=>a.id===agencyId);
     const nh=[{id:gid(),type,mode,itemId,itemName:item?.name||"",sizeKey:sizeKey||"",agencyId:agencyId||"",agencyName:ag?.name||"",qty:n,memo:memo||"",date:date||td()},...invHist];
     await sih(nh); toast_(mode==="in"?`입고 +${n}`:`출고 -${n}`);
+  };
+
+  // ── 다중 출고 처리 ──
+  const doMultiOut = async({items, agencyId, newAgency, recipient, memo, date}) => {
+    // 1) 신규 거래처 자동 등록
+    let finalAgencyId = agencyId || "";
+    let finalAgencyName = agencies.find(a=>a.id===agencyId)?.name || "";
+    if(newAgency?.name?.trim()){
+      const newAg = {
+        id: gid(), name: newAgency.name.trim(),
+        agType: newAgency.agType||"대리점", phone: newAgency.phone||"",
+        bizNo: newAgency.bizNo||"", address:"", manager:"", memo:""
+      };
+      const updatedAg = [newAg, ...agencies];
+      await sag(updatedAg);
+      finalAgencyId   = newAg.id;
+      finalAgencyName = newAg.name;
+    }
+    // 2) 각 아이템 재고 차감
+    let nu = [...uniforms];
+    const histEntries = [];
+    let totalQty = 0;
+    for(const it of items){
+      const n = Number(it.qty); if(!n||n<=0) continue;
+      nu = nu.map(u=>{
+        if(u.id!==it.itemId) return u;
+        const sz = {...(u.sizes||{})};
+        sz[it.sizeKey] = Math.max(0, Number(sz[it.sizeKey]||0) - n);
+        return {...u, sizes:sz};
+      });
+      const itemObj = uniforms.find(x=>x.id===it.itemId);
+      histEntries.push({
+        id:gid(), type:"uniform", mode:"out",
+        itemId:it.itemId, itemName:itemObj?.name||"",
+        sizeKey:it.sizeKey, qty:n,
+        agencyId:finalAgencyId, agencyName:finalAgencyName,
+        recipient: recipient||{}, memo:memo||"", date:date||td()
+      });
+      totalQty += n;
+    }
+    await su(nu);
+    await sih([...histEntries, ...invHist]);
+    toast_(`📤 출고 완료 — ${histEntries.length}종 총 ${totalQty}벌`);
   };
 
   // ── CSV 파싱 헬퍼 ──
@@ -2055,7 +2075,7 @@ function InventoryPage({db}){
       </div>
       {tab==="uniform"&&<>
         {lowU.length>0&&<div style={{background:"rgba(245,158,11,0.1)",border:"1px solid #f59e0b",borderRadius:8,padding:"8px 14px",marginBottom:12,color:"#fcd34d",fontSize:12}}>⚠️ 재고 부족: {lowU.map(u=>u.name).join(", ")}</div>}
-        <UniformListView uniforms={uniforms} onEdit={u=>setUM({mode:"edit",data:u})} onDel={delU} onIO={setIO} onAdd={()=>setUM("add")}/>
+        <UniformListView uniforms={uniforms} onEdit={u=>setUM({mode:"edit",data:u})} onDel={delU} onIO={d=>d.mode==="out"?setOM(d.item):setIO(d)} onAdd={()=>setUM("add")}/>
       </>}
       {tab==="equip"&&<>
         {zeroE.length>0&&<div style={{background:"rgba(239,68,68,0.1)",border:"1px solid #ef4444",borderRadius:8,padding:"8px 14px",marginBottom:12,color:"#fca5a5",fontSize:12}}>🚫 품절: {zeroE.map(e=>e.name).join(", ")}</div>}
@@ -2124,6 +2144,10 @@ function InventoryPage({db}){
       {eMod==="add"&&<EquipModal onClose={()=>setEM(null)} onSave={d=>{addE(d);setEM(null);}}/>}
       {agMod&&<AgencyModal onClose={()=>setAM(null)} onSave={d=>{addAg(d);setAM(null);}}/>}
       {ioMod&&<IOModal modal={ioMod} agencies={agencies} onClose={()=>setIO(null)} onSave={d=>{doIO(d);setIO(null);}}/>}
+      {outMod&&<MultiOutModal initItem={outMod} uniforms={uniforms} agencies={agencies}
+        onClose={()=>setOM(null)}
+        onSave={async d=>{await doMultiOut(d);setOM(null);}}
+      />}
       {importMod&&<CSVImportModal modal={importMod} uniforms={uniforms} equips={equips}
         onClose={()=>setImportMod(null)}
         onSaveUniforms={async(arr)=>{
@@ -2498,18 +2522,243 @@ function UniformModal({onClose,onSave,initial}){
   </Modal>;
 }
 function AgencyModal({onClose,onSave}){
-  const [f,setF]=useState({name:"",phone:"",address:"",manager:"",memo:""});
-  return <Modal title="대리점 등록" onClose={onClose}>
+  const [f,setF]=useState({name:"",agType:"대리점",phone:"",bizNo:"",address:"",manager:"",memo:""});
+  const u=k=>e=>setF(p=>({...p,[k]:e.target.value}));
+  return <Modal title="거래처 등록" onClose={onClose}>
     <div style={GS.fGrid}>
-      <MFR label="대리점명 *"><input style={GS.inp} value={f.name} onChange={e=>setF(p=>({...p,name:e.target.value}))}/></MFR>
-      <MFR label="전화번호 *"><input style={GS.inp} value={f.phone} onChange={e=>setF(p=>({...p,phone:e.target.value}))}/></MFR>
-      <MFR label="담당자"><input style={GS.inp} value={f.manager} onChange={e=>setF(p=>({...p,manager:e.target.value}))}/></MFR>
+      <MFR label="거래처명 *"><input style={GS.inp} value={f.name} onChange={u("name")} placeholder="예) 서울스포츠대리점"/></MFR>
+      <MFR label="유형">
+        <select style={GS.inp} value={f.agType} onChange={u("agType")}>
+          {["대리점","소매점","단체","기타"].map(t=><option key={t}>{t}</option>)}
+        </select>
+      </MFR>
+      <MFR label="연락처"><input style={GS.inp} value={f.phone} onChange={u("phone")} placeholder="010-0000-0000"/></MFR>
+      <MFR label="사업자번호"><input style={GS.inp} value={f.bizNo} onChange={u("bizNo")} placeholder="000-00-00000"/></MFR>
+      <MFR label="담당자"><input style={GS.inp} value={f.manager} onChange={u("manager")}/></MFR>
     </div>
-    <MFR label="주소"><input style={GS.inp} value={f.address} onChange={e=>setF(p=>({...p,address:e.target.value}))}/></MFR>
-    <MFR label="메모"><input style={GS.inp} value={f.memo} onChange={e=>setF(p=>({...p,memo:e.target.value}))}/></MFR>
+    <MFR label="주소"><input style={GS.inp} value={f.address} onChange={u("address")}/></MFR>
+    <MFR label="메모"><input style={GS.inp} value={f.memo} onChange={u("memo")}/></MFR>
     <div style={GS.mBtns}><SBtn onClick={()=>{if(!f.name.trim())return;onSave(f);}} color="#8b5cf6" full>등록</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
   </Modal>;
 }
+/* ═══════════════════════════════════════════════════════
+   MULTI OUT MODAL — 다중 출고 처리
+═══════════════════════════════════════════════════════ */
+function MultiOutModal({initItem, uniforms, agencies, onClose, onSave}){
+  const today = new Date().toISOString().slice(0,10);
+  const [date,   setDate]   = useState(today);
+  // ── 거래처 섹션 ──
+  const [agMode, setAgMode] = useState("existing"); // "existing" | "new"
+  const [agencyId, setAgId] = useState("");
+  const [newAg, setNewAg]   = useState({name:"",agType:"대리점",phone:"",bizNo:""});
+  // ── 직배(받는사람) 정보 — 거래처 저장 X ──
+  const [rcpt, setRcpt] = useState({name:"",phone:"",address:""});
+  const [showRcpt, setShowRcpt] = useState(false);
+  // ── 출고 품목 목록 ──
+  const firstSz = initItem ? Object.keys(initItem.sizes||{})[0]||"" : "";
+  const [items, setItems] = useState(
+    initItem ? [{lid:gid(), itemId:initItem.id, sizeKey:firstSz, qty:1}] : []
+  );
+  const [memo, setMemo] = useState("");
+  const [err,  setErr]  = useState("");
+
+  const addItem = () => {
+    const first = uniforms[0];
+    const sz = first ? Object.keys(first.sizes||{})[0]||"" : "";
+    setItems(p=>[...p, {lid:gid(), itemId:first?.id||"", sizeKey:sz, qty:1}]);
+  };
+  const removeItem = lid => setItems(p=>p.filter(x=>x.lid!==lid));
+  const updateItem = (lid,key,val) => setItems(p=>p.map(x=>x.lid===lid?{...x,[key]:val}:x));
+
+  const getSizes = itemId => {
+    const u = uniforms.find(u=>u.id===itemId);
+    return Object.keys(u?.sizes||{});
+  };
+  const getStock = (itemId, sz) => {
+    const u = uniforms.find(u=>u.id===itemId);
+    return Number(u?.sizes?.[sz]||0);
+  };
+
+  const handleSave = () => {
+    setErr("");
+    if(items.length===0){ setErr("출고 품목을 1개 이상 추가하세요."); return; }
+    for(const it of items){
+      if(!it.itemId||!it.sizeKey){ setErr("품목과 사이즈를 모두 선택해주세요."); return; }
+      if(!it.qty||Number(it.qty)<=0){ setErr("수량은 1 이상이어야 합니다."); return; }
+      const stk = getStock(it.itemId, it.sizeKey);
+      if(Number(it.qty)>stk){ setErr(`재고 부족: ${uniforms.find(u=>u.id===it.itemId)?.name||""} ${it.sizeKey} (현재 ${stk}벌)`); return; }
+    }
+    if(agMode==="new" && !newAg.name.trim()){ setErr("신규 거래처명을 입력하세요."); return; }
+    onSave({
+      items: items.map(x=>({itemId:x.itemId,sizeKey:x.sizeKey,qty:Number(x.qty)})),
+      agencyId: agMode==="existing" ? agencyId : "",
+      newAgency: agMode==="new" ? newAg : null,
+      recipient: showRcpt ? rcpt : null,
+      memo, date
+    });
+  };
+
+  const rowSt = {display:"flex",gap:8,alignItems:"flex-start",background:"#1e293b",borderRadius:8,padding:"10px 12px",marginBottom:8,border:"1px solid #334155"};
+  const selSt = {...GS.inp, fontSize:13, padding:"8px 10px"};
+  const numSt = {...GS.inp, fontSize:13, padding:"8px 10px", width:64, textAlign:"center"};
+  const tabSt = act => ({padding:"6px 14px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",border:"none",
+    background:act?"#1d4ed8":"#1e293b",color:act?"#fff":"#94a3b8"});
+
+  return (
+    <Modal title="📤 출고 처리" onClose={onClose} wide>
+      {/* 날짜 */}
+      <MFR label="날짜">
+        <input type="date" style={GS.inp} value={date} onChange={e=>setDate(e.target.value)}/>
+      </MFR>
+
+      {/* 거래처 섹션 */}
+      <div style={{marginBottom:14}}>
+        <div style={{fontSize:12,color:"#94a3b8",fontWeight:500,marginBottom:8}}>거래처</div>
+        <div style={{display:"flex",gap:6,marginBottom:10}}>
+          <button style={tabSt(agMode==="existing")} onClick={()=>setAgMode("existing")}>기존 거래처</button>
+          <button style={tabSt(agMode==="new")} onClick={()=>setAgMode("new")}>+ 신규 등록</button>
+          <button style={tabSt(agMode==="none")} onClick={()=>setAgMode("none")}>거래처 없음</button>
+        </div>
+        {agMode==="existing" && (
+          <select style={GS.inp} value={agencyId} onChange={e=>setAgId(e.target.value)}>
+            <option value="">— 선택 안 함 —</option>
+            {agencies.map(a=>(
+              <option key={a.id} value={a.id}>{a.name}{a.agType?` (${a.agType})`:""}</option>
+            ))}
+          </select>
+        )}
+        {agMode==="new" && (
+          <div style={{background:"#0d1117",borderRadius:8,padding:"12px",border:"1px solid #1e293b"}}>
+            <div style={{fontSize:11,color:"#64748b",marginBottom:8}}>📋 신규 거래처 정보 — 저장 시 거래처 관리에 자동 등록</div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <MFR label="거래처명 *">
+                <input style={GS.inp} value={newAg.name} onChange={e=>setNewAg(p=>({...p,name:e.target.value}))} placeholder="예) 서울스포츠"/>
+              </MFR>
+              <MFR label="유형">
+                <select style={GS.inp} value={newAg.agType} onChange={e=>setNewAg(p=>({...p,agType:e.target.value}))}>
+                  {["대리점","소매점","단체","기타"].map(t=><option key={t}>{t}</option>)}
+                </select>
+              </MFR>
+              <MFR label="연락처">
+                <input style={GS.inp} value={newAg.phone} onChange={e=>setNewAg(p=>({...p,phone:e.target.value}))} placeholder="010-0000-0000"/>
+              </MFR>
+              <MFR label="사업자번호">
+                <input style={GS.inp} value={newAg.bizNo} onChange={e=>setNewAg(p=>({...p,bizNo:e.target.value}))} placeholder="000-00-00000"/>
+              </MFR>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 직배 받는사람 (선택) */}
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+          <span style={{fontSize:12,color:"#94a3b8",fontWeight:500}}>직배 배송 정보</span>
+          <button onClick={()=>setShowRcpt(p=>!p)} style={{background:showRcpt?"rgba(59,130,246,0.2)":"#1e293b",border:"1px solid "+(showRcpt?"#3b82f6":"#334155"),color:showRcpt?"#93c5fd":"#64748b",borderRadius:6,padding:"2px 9px",fontSize:11,cursor:"pointer"}}>
+            {showRcpt?"▲ 접기":"▼ 펼치기"}
+          </button>
+          <span style={{fontSize:10,color:"#475569"}}>(거래처 저장 안 됨)</span>
+        </div>
+        {showRcpt && (
+          <div style={{background:"#0d1117",borderRadius:8,padding:"12px",border:"1px solid #1e293b"}}>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+              <MFR label="받는사람 이름">
+                <input style={GS.inp} value={rcpt.name} onChange={e=>setRcpt(p=>({...p,name:e.target.value}))} placeholder="홍길동"/>
+              </MFR>
+              <MFR label="받는사람 연락처">
+                <input style={GS.inp} value={rcpt.phone} onChange={e=>setRcpt(p=>({...p,phone:e.target.value}))} placeholder="010-0000-0000"/>
+              </MFR>
+            </div>
+            <MFR label="받는사람 주소">
+              <input style={GS.inp} value={rcpt.address} onChange={e=>setRcpt(p=>({...p,address:e.target.value}))} placeholder="서울시 강남구 ..."/>
+            </MFR>
+          </div>
+        )}
+      </div>
+
+      {/* 출고 품목 목록 */}
+      <div style={{marginBottom:14}}>
+        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+          <span style={{fontSize:12,color:"#94a3b8",fontWeight:500}}>출고 품목</span>
+          <SBtn onClick={addItem} color="#065f46">+ 품목 추가</SBtn>
+        </div>
+
+        {items.length===0 && (
+          <div style={{textAlign:"center",color:"#4b5563",fontSize:12,padding:"20px 0",border:"1px dashed #334155",borderRadius:8}}>
+            [+ 품목 추가] 버튼을 눌러 출고할 유니폼을 추가하세요
+          </div>
+        )}
+
+        {items.map((it,idx)=>{
+          const sizes = getSizes(it.itemId);
+          const stk   = getStock(it.itemId, it.sizeKey);
+          const over  = Number(it.qty) > stk;
+          return (
+            <div key={it.lid} style={{...rowSt, border:`1px solid ${over?"#ef4444":"#334155"}`}}>
+              <span style={{fontSize:11,color:"#64748b",paddingTop:8,minWidth:18}}>{idx+1}</span>
+              {/* 유니폼 선택 */}
+              <div style={{flex:2}}>
+                <div style={{fontSize:10,color:"#64748b",marginBottom:3}}>유니폼</div>
+                <select style={selSt} value={it.itemId}
+                  onChange={e=>{
+                    const szs = Object.keys(uniforms.find(u=>u.id===e.target.value)?.sizes||{});
+                    updateItem(it.lid,"itemId",e.target.value);
+                    updateItem(it.lid,"sizeKey",szs[0]||"");
+                  }}>
+                  {uniforms.map(u=><option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+              </div>
+              {/* 사이즈 선택 */}
+              <div style={{flex:1}}>
+                <div style={{fontSize:10,color:"#64748b",marginBottom:3}}>사이즈</div>
+                <select style={selSt} value={it.sizeKey} onChange={e=>updateItem(it.lid,"sizeKey",e.target.value)}>
+                  {sizes.map(sz=>{
+                    const s=getStock(it.itemId,sz);
+                    return <option key={sz} value={sz}>{sz} ({s})</option>;
+                  })}
+                </select>
+              </div>
+              {/* 수량 */}
+              <div>
+                <div style={{fontSize:10,color:"#64748b",marginBottom:3}}>수량</div>
+                <div style={{display:"flex",alignItems:"center",gap:4}}>
+                  <button style={{width:28,height:32,background:"#374151",border:"none",color:"white",borderRadius:5,cursor:"pointer",fontSize:16}} onClick={()=>updateItem(it.lid,"qty",Math.max(1,Number(it.qty)-1))}>−</button>
+                  <input type="number" style={{...numSt,border:`1px solid ${over?"#ef4444":"#334155"}`}} value={it.qty} min={1}
+                    onChange={e=>updateItem(it.lid,"qty",Math.max(1,Number(e.target.value)||1))}/>
+                  <button style={{width:28,height:32,background:"#374151",border:"none",color:"white",borderRadius:5,cursor:"pointer",fontSize:16}} onClick={()=>updateItem(it.lid,"qty",Number(it.qty)+1)}>+</button>
+                </div>
+                {over && <div style={{fontSize:9,color:"#ef4444",marginTop:2}}>재고 {stk}벌 초과</div>}
+                {!over && stk>0 && <div style={{fontSize:9,color:"#475569",marginTop:2}}>재고 {stk}벌</div>}
+              </div>
+              {/* 삭제 */}
+              <button onClick={()=>removeItem(it.lid)} style={{background:"#7f1d1d",border:"none",color:"white",borderRadius:6,padding:"0 8px",height:32,cursor:"pointer",fontSize:14,alignSelf:"flex-end",marginBottom:0}}>✕</button>
+            </div>
+          );
+        })}
+        {/* 합계 */}
+        {items.length>0 && (
+          <div style={{textAlign:"right",fontSize:12,color:"#94a3b8",marginTop:4}}>
+            총 {items.length}종 {items.reduce((a,x)=>a+Number(x.qty||0),0)}벌
+          </div>
+        )}
+      </div>
+
+      {/* 메모 */}
+      <MFR label="메모">
+        <input style={GS.inp} value={memo} onChange={e=>setMemo(e.target.value)} placeholder="특이사항 (선택)"/>
+      </MFR>
+
+      {/* 에러 */}
+      {err && <div style={{color:"#f87171",fontSize:12,marginBottom:8,padding:"6px 10px",background:"rgba(239,68,68,0.1)",borderRadius:6}}>⚠️ {err}</div>}
+
+      <div style={GS.mBtns}>
+        <SBtn onClick={handleSave} color="#ef4444" full>📤 출고 처리</SBtn>
+        <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
+      </div>
+    </Modal>
+  );
+}
+
 function IOModal({modal,agencies,onClose,onSave}){
   const {type,item,mode}=modal;
   const [sizeKey,setSK]=useState(type==="uniform"?Object.keys(item.sizes||{})[0]||"":"");
