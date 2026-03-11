@@ -1877,7 +1877,7 @@ function CalendarPage({ db, isMobile }) {
    MODULE 2 — INVENTORY
 ═══════════════════════════════════════════════════════ */
 function InventoryPage({db}){
-  const {uniforms,equips,invHist,agencies,su,se,sih,sag,toast_}=db;
+  const {uniforms,equips,invHist,agencies,uSales=[],su,se,sih,sag,sus,toast_}=db;
   const [tab,setTab]=useState("uniform");
   const [uMod,setUM]=useState(null);
   const [eMod,setEM]=useState(null);
@@ -3045,8 +3045,8 @@ function SalesPage({db}){
       {tab==="groupsale"&&<GroupSaleTab uSales={uSales} onToggle={togPaid} onEdit={r=>setEdit({type:"uniform",data:r})} onDel={id=>delSale("uniform",id)}/>}
       {tab==="delivery"&&<DeliveryTab uSales={uSales} onToggle={togPaid} onEdit={r=>setEdit({type:"uniform",data:r})} onDel={id=>delSale("uniform",id)}/>}
       {tab==="unpaid"&&<UnpaidTab uSales={uSales} eSales={eSales} onToggle={togPaid}/>}
-      {addMod&&<SaleMod type={addMod} uniforms={uniforms||[]} onClose={()=>setAdd(null)} onSave={d=>{addSale(addMod,d);setAdd(null);}}/>}
-      {editMod&&<SaleMod type={editMod.type} uniforms={uniforms||[]} initial={editMod.data} onClose={()=>setEdit(null)} onSave={d=>{updSale(editMod.type,{...editMod.data,...d});setEdit(null);}}/>}
+      {addMod&&<SaleMod type={addMod} uniforms={uniforms||[]} agencies={agencies} onClose={()=>setAdd(null)} onSave={d=>{addSale(addMod,d);setAdd(null);}}/>}
+      {editMod&&<SaleMod type={editMod.type} uniforms={uniforms||[]} agencies={agencies} initial={editMod.data} onClose={()=>setEdit(null)} onSave={d=>{updSale(editMod.type,{...editMod.data,...d});setEdit(null);}}/>}
       {msgMod&&<SendMsgModal targets={customers} templates={templates} onClose={()=>setMsg(null)}/>}
     </div>
   );
@@ -3487,7 +3487,7 @@ function UnpaidTab({uSales,eSales,onToggle}){
     }
   </div>;
 }
-function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
+function SaleMod({type,initial,onClose,onSave,uniforms=[],agencies=[]}){ 
   const iU=type==="uniform";
   const [f,setF]=useState({date:td(),customer:"",orderType:iU?"단품판매":"라켓",detail:"",sales:"",cost:"",payMethod:"계좌이체",paid:false,tracking:"",memo:"",itemName:"",...(initial||{})});
   const s=(k,v)=>setF(p=>({...p,[k]:v}));
@@ -3574,7 +3574,15 @@ function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
   return <Modal title={`${iU?"👕 유니폼":"🏓 용품"} 매출 ${initial?"수정":"등록"}`} onClose={onClose}>
     <div style={GS.fGrid}>
       <MFR label="날짜"><input type="date" style={GS.inp} value={f.date} onChange={e=>s("date",e.target.value)}/></MFR>
-      <MFR label="거래처명"><input style={GS.inp} value={f.customer} onChange={e=>s("customer",e.target.value)} placeholder="동호회명"/></MFR>
+      <MFR label="거래처명">
+        <input style={GS.inp} value={f.customer}
+          onChange={e=>s("customer",e.target.value)}
+          placeholder="동호회명 입력 또는 선택"
+          list="sale-agency-list"/>
+        <datalist id="sale-agency-list">
+          {agencies.map(a=><option key={a.id} value={a.name}>{a.agType?" ("+a.agType+")":""}</option>)}
+        </datalist>
+      </MFR>
     </div>
     <MFR label="주문유형"><div style={GS.chips}>{(iU?["단품판매","단체복 등판 제작","기타"]:["라켓","러버","공","가방","기타용품"]).map(t=><Chip key={t} active={f.orderType===t} onClick={()=>{s("orderType",t);setSelSize("");setSelQty(1);setSizeQtys({});setBulkSizeQtys({});if(selUni){s("sales","");s("cost","");s("detail",selUni.name);}}}>{t}</Chip>)}</div></MFR>
 
@@ -4223,23 +4231,76 @@ function PrintModal({order,onClose}){
    MODULE 5-8 — CRM / PAYMENTS / INVOICES / MESSAGES
 ═══════════════════════════════════════════════════════ */
 function CRMPage({db}){
-  const {customers,templates,sc,toast_}=db;
+  const {agencies=[],customers=[],templates,sag,sc,toast_}=db;
   const [addM,setAdd]=useState(false); const [editId,setEdit]=useState(null); const [msgId,setMsg]=useState(null); const [bulk,setBulk]=useState(false); const [selIds,setSel]=useState([]);
   const [search,setSearch]=useState(""); const [tf,setTF]=useState("전체"); const [rf,setRF]=useState("전체");
   const [dragOver,setDragOver]=useState(false); const [importMod,setImportMod]=useState(null);
-  const fil=useMemo(()=>customers.filter(c=>{ const t=tf==="전체"||c.type===tf; const r=rf==="전체"||c.region===rf; const q=!search||(c.name||"").includes(search)||(c.contact||"").includes(search); return t&&r&&q; }),[customers,tf,rf,search]);
-  const tog=id=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
-  const addC=async d=>{ await sc([{...d,id:gid(),createdAt:td()},...customers]); toast_("등록!"); };
-  const updC=async(id,d)=>{ await sc(customers.map(c=>c.id===id?{...c,...d}:c)); toast_("수정!"); };
-  const delC=async id=>{ await sc(customers.filter(c=>c.id!==id)); toast_("삭제"); };
-  const editC=customers.find(c=>c.id===editId);
-  const msgC=customers.find(c=>c.id===msgId);
+  // ── 통합 거래처 목록: agencies 우선 + customers 중복 제거 병합
+  const allItems = useMemo(()=>{
+    const norm = a => ({
+      ...a,
+      _src: "agency",
+      // 양쪽 필드 호환
+      agType: a.agType || a.type || "기타",
+      phone:  a.phone  || a.contact || "",
+      email:  a.email  || "",
+      region: a.region || "",
+      bizNo:  a.bizNo  || a.bizNum  || "",
+    });
+    const normC = c => ({
+      ...c,
+      _src: "customer",
+      agType: c.type || "기타",
+      phone:  c.contact || "",
+      bizNo:  c.bizNum || "",
+    });
+    const agIds   = new Set(agencies.map(a=>a.id));
+    const agNames = new Set(agencies.map(a=>a.name));
+    // customers 중 agencies에 없는 것만 추가
+    const extraC = customers
+      .filter(c=>!agIds.has(c.id) && !agNames.has(c.name))
+      .map(normC);
+    return [...agencies.map(norm), ...extraC];
+  },[agencies, customers]);
+
+  const fil = useMemo(()=>allItems.filter(c=>{
+    const t = tf==="전체" || c.agType===tf;
+    const r = rf==="전체" || c.region===rf;
+    const q = !search||(c.name||"").includes(search)||(c.phone||"").includes(search);
+    return t&&r&&q;
+  }),[allItems,tf,rf,search]);
+
+  const tog = id=>setSel(p=>p.includes(id)?p.filter(x=>x!==id):[...p,id]);
+
+  // 새 거래처 → agencies(sag) 에 저장
+  const addC = async d => {
+    await sag([{...d, id:gid(), createdAt:td()}, ...agencies]);
+    toast_("등록!");
+  };
+  const updC = async(id,d) => {
+    if(agencies.some(a=>a.id===id)){
+      await sag(agencies.map(a=>a.id===id?{...a,...d}:a));
+    } else {
+      await sc(customers.map(c=>c.id===id?{...c,...d}:c));
+    }
+    toast_("수정!");
+  };
+  const delC = async id => {
+    if(agencies.some(a=>a.id===id)){
+      await sag(agencies.filter(a=>a.id!==id));
+    } else {
+      await sc(customers.filter(c=>c.id!==id));
+    }
+    toast_("삭제");
+  };
+  const editC = allItems.find(c=>c.id===editId);
+  const msgC  = allItems.find(c=>c.id===msgId);
 
   // 엑셀 내보내기
   const exportCRM = () => {
     exportCSV(`거래처목록_${td()}.csv`,
       ["거래처명","유형","연락처","이메일","지역","주소","사업자번호","메모"],
-      customers.map(c=>[c.name,c.type||"-",c.contact||"-",c.email||"-",c.region||"-",c.address||"-",c.bizNum||"-",c.memo||"-"])
+      allItems.map(c=>[c.name,c.agType||c.type||"-",c.phone||c.contact||"-",c.email||"-",c.region||"-",c.address||"-",c.bizNo||c.bizNum||"-",c.memo||"-"])
     );
     toast_("엑셀 파일 저장!");
   };
@@ -4324,7 +4385,7 @@ function CRMPage({db}){
 
     <div style={GS.toolbar}>
       <input style={{...GS.sInp,width:180}} placeholder="이름·연락처 검색..." value={search} onChange={e=>setSearch(e.target.value)}/>
-      <select style={GS.sSel} value={tf} onChange={e=>setTF(e.target.value)}><option value="전체">전체 유형</option>{CUST_TYPES.map(t=><option key={t}>{t}</option>)}</select>
+      <select style={GS.sSel} value={tf} onChange={e=>setTF(e.target.value)}><option value="전체">전체 유형</option>{[...CUST_TYPES,...["대리점","소매점","단체"]].filter((v,i,a)=>a.indexOf(v)===i).map(t=><option key={t}>{t}</option>)}</select>
       <select style={GS.sSel} value={rf} onChange={e=>setRF(e.target.value)}><option value="전체">전체 지역</option>{REGIONS.map(r=><option key={r}>{r}</option>)}</select>
       <div style={{marginLeft:"auto",display:"flex",gap:6}}>
         {selIds.length>0&&<SBtn onClick={()=>setBulk(true)} color="#6366f1">📨 단체문자({selIds.length}명)</SBtn>}
@@ -4337,14 +4398,14 @@ function CRMPage({db}){
         {fil.map(c=><div key={c.id} style={{background:"#111827",border:`1px solid ${selIds.includes(c.id)?"#3b82f6":"#1e293b"}`,borderRadius:10,padding:12}}>
           <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:6}}>
             <input type="checkbox" checked={selIds.includes(c.id)} onChange={()=>tog(c.id)} style={{cursor:"pointer",accentColor:"#3b82f6"}}/>
-            <TypeBadge type={c.type}/>
+            <TypeBadge type={c.agType||c.type||"기타"}/>
             {c.region&&<span style={{background:"#1e293b",borderRadius:4,padding:"1px 6px",fontSize:10,color:"#64748b"}}>{c.region}</span>}
           </div>
           <div style={{fontWeight:600,fontSize:14,marginBottom:4}}>{c.name||"-"}</div>
-          {c.contact&&<div style={{fontSize:12,color:"#94a3b8",marginBottom:2}}>📞 {c.contact}</div>}
+          {(c.phone||c.contact)&&<div style={{fontSize:12,color:"#94a3b8",marginBottom:2}}>📞 {c.phone||c.contact}</div>}
           {c.email&&<div style={{fontSize:12,color:"#94a3b8",marginBottom:2}}>✉️ {c.email}</div>}
           {c.address&&<div style={{fontSize:12,color:"#94a3b8",marginBottom:2}}>📍 {c.address}</div>}
-          {c.bizNum&&<div style={{fontSize:11,color:"#64748b",marginBottom:2}}>🏢 {c.bizNum}</div>}
+          {(c.bizNo||c.bizNum)&&<div style={{fontSize:11,color:"#64748b",marginBottom:2}}>🏢 {c.bizNo||c.bizNum}</div>}
           {c.memo&&<div style={{fontSize:11,color:"#64748b",borderTop:"1px solid #1e293b",paddingTop:5,marginTop:5}}>📝 {c.memo}</div>}
           <div style={{display:"flex",gap:5,marginTop:8}}>
             <SBtn onClick={()=>setEdit(c.id)} color="#1e3a5f">수정</SBtn>
@@ -4357,10 +4418,10 @@ function CRMPage({db}){
     {addM&&<CustModal onClose={()=>setAdd(false)} onSave={d=>{addC(d);setAdd(false);}}/>}
     {editC&&<CustModal initial={editC} onClose={()=>setEdit(null)} onSave={d=>{updC(editId,d);setEdit(null);}}/>}
     {msgC&&<SendMsgModal targets={[msgC]} templates={templates} onClose={()=>setMsg(null)}/>}
-    {bulk&&<SendMsgModal targets={customers.filter(c=>selIds.includes(c.id))} templates={templates} onClose={()=>setBulk(false)} isBulk/>}
-    {importMod&&<CRMImportModal modal={importMod} customers={customers}
+    {bulk&&<SendMsgModal targets={allItems.filter(c=>selIds.includes(c.id))} templates={templates} onClose={()=>setBulk(false)} isBulk/>}
+    {importMod&&<CRMImportModal modal={importMod} customers={allItems}
       onClose={()=>setImportMod(null)}
-      onSave={async(arr)=>{ await sc([...arr,...customers]); toast_(`거래처 ${arr.length}개 가져오기 완료!`); setImportMod(null); }}
+      onSave={async(arr)=>{ await sag([...arr,...agencies]); toast_(`거래처 ${arr.length}개 가져오기 완료!`); setImportMod(null); }}
     />}
   </div>;
 }
@@ -4421,11 +4482,11 @@ function CRMImportModal({ modal, customers, onClose, onSave }) {
               <div style={{flex:1,minWidth:0}}>
                 <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
                   <span style={{fontWeight:600,fontSize:13}}>{c.name}</span>
-                  <TypeBadge type={c.type}/>
+                  <TypeBadge type={c.agType||c.type||"기타"}/>
                   {c.region && <span style={{background:"#0b0f1a",borderRadius:4,padding:"1px 6px",fontSize:10,color:"#64748b"}}>{c.region}</span>}
                 </div>
                 <div style={{fontSize:11,color:"#64748b",display:"flex",gap:10,flexWrap:"wrap"}}>
-                  {c.contact && <span>📞 {c.contact}</span>}
+                  {(c.phone||c.contact) && <span>📞 {c.phone||c.contact}</span>}
                   {c.email   && <span>✉️ {c.email}</span>}
                   {c.address && <span>📍 {c.address}</span>}
                 </div>
