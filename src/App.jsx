@@ -3775,7 +3775,7 @@ function SaleMod({type,initial,onClose,onSave,uniforms=[]}){
    MODULE 4 — ORDERS
 ═══════════════════════════════════════════════════════ */
 function OrdersPage({db}){
-  const {orders,sor,toast_}=db;
+  const {orders,uniforms=[],agencies=[],sor,sag,sus,uSales=[],toast_}=db;
   const [tab,setTab]=useState("list");
   const [addMod,setAdd]=useState(false);
   const [detId,setDet]=useState(null);
@@ -3783,7 +3783,17 @@ function OrdersPage({db}){
   const [search,setSearch]=useState("");
   const [sf,setSF]=useState("all");
 
-  const addOrder=async d=>{ await sor([{...d,id:gid(),createdAt:td()},...orders]); toast_("주문 등록!"); };
+  const addOrder=async d=>{
+    let finalD={...d};
+    if(d.newAgency?.name?.trim()){
+      const na={id:gid(),name:d.newAgency.name.trim(),agType:d.newAgency.agType||"대리점",
+        phone:d.newAgency.phone||"",bizNo:d.newAgency.bizNo||"",address:"",manager:"",memo:""};
+      await sag([na,...agencies]);
+      finalD={...finalD,agencyId:na.id,customer:na.name,newAgency:null};
+    }
+    await sor([{...finalD,id:gid(),createdAt:td()},...orders]);
+    toast_("주문 등록!");
+  };
   const updOrder=async(id,patch)=>{ await sor(orders.map(o=>o.id===id?{...o,...patch}:o)); };
   const delOrder=async id=>{ await sor(orders.filter(o=>o.id!==id)); toast_("삭제"); };
 
@@ -3815,7 +3825,7 @@ function OrdersPage({db}){
         </div>
       )}
       {tab==="kanban"&&<KanbanView orders={orders} onDetail={id=>setDet(id)} onStatus={(id,k)=>updOrder(id,{status:k})} onPrint={id=>setPrint(id)}/>}
-      {addMod&&<OrderModal onClose={()=>setAdd(false)} onSave={d=>{addOrder(d);setAdd(false);}}/>}
+      {addMod&&<OrderModal uniforms={uniforms} agencies={agencies} onClose={()=>setAdd(false)} onSave={d=>{addOrder(d);setAdd(false);}}/>}
       {detOrder&&<DetailModal order={detOrder} onClose={()=>setDet(null)} onUpdate={p=>updOrder(detId,p)} onPrint={()=>{setDet(null);setPrint(detId);}}/>}
       {printOrder&&<PrintModal order={printOrder} onClose={()=>setPrint(null)}/>}
     </div>
@@ -3871,24 +3881,217 @@ function KanbanView({orders,onDetail,onStatus,onPrint}){
     })}
   </div>;
 }
-function OrderModal({onClose,onSave}){
-  const add14=(d)=>{ const dt=new Date(d||Date.now()); dt.setDate(dt.getDate()+14); return dt.toISOString().slice(0,10); };
-  const [f,setF]=useState({customer:"",contact:"",uniformName:"",dueDate:add14(),amount:"",status:"consulting",manager:"",memo:""});
-  const s=(k,v)=>setF(p=>({...p,[k]:v}));
-  return <Modal title="📦 주문 등록" onClose={onClose}>
-    <div style={GS.fGrid}>
-      <MFR label="거래처명 *"><input style={GS.inp} value={f.customer} onChange={e=>s("customer",e.target.value)} placeholder="동호회명"/></MFR>
-      <MFR label="연락처"><input style={GS.inp} value={f.contact} onChange={e=>s("contact",e.target.value)} placeholder="010-0000-0000"/></MFR>
+function OrderModal({uniforms=[],agencies=[],onClose,onSave}){
+  const add14=()=>{const d=new Date();d.setDate(d.getDate()+14);return d.toISOString().slice(0,10);};
+
+  // ── 거래처 모드
+  const [agMode,setAgMode]=useState("existing");
+  const [agencyId,setAgId]=useState("");
+  const [newAg,setNewAg]=useState({name:"",agType:"대리점",phone:"",bizNo:""});
+  const [contact,setContact]=useState("");
+
+  // ── 유니폼 항목 (다중)
+  const [uItems,setUItems]=useState(()=>{
+    const f=uniforms[0];
+    return [{lid:gid(),uniformId:f?.id||"",uniformName:f?.name||"",color:"",qty:"",shopPrice:f?Number(f.shopPrice||0):0}];
+  });
+  const addUItem=()=>{const f=uniforms[0];setUItems(p=>[...p,{lid:gid(),uniformId:f?.id||"",uniformName:f?.name||"",color:"",qty:"",shopPrice:f?Number(f.shopPrice||0):0}]);};
+  const removeUItem=lid=>setUItems(p=>p.filter(x=>x.lid!==lid));
+  const updateUItem=(lid,key,val)=>setUItems(p=>p.map(x=>{
+    if(x.lid!==lid)return x;
+    const up={...x,[key]:val};
+    if(key==="uniformId"){const u=uniforms.find(u=>u.id===val);up.uniformName=u?.name||"";up.shopPrice=u?Number(u.shopPrice||0):0;}
+    return up;
+  }));
+
+  // ── 시안 목록
+  const [saves,setSaves]=useState([]);
+  const [selDesigns,setSelD]=useState([]);
+  useEffect(()=>{ld("ds:__saves",[]).then(raw=>{setSaves(raw.map(x=>typeof x==="string"?{key:x,custName:x,savedAt:null}:x));});},[]);
+  const toggleDesign=meta=>setSelD(p=>p.some(d=>d.key===meta.key)?p.filter(d=>d.key!==meta.key):[...p,meta]);
+
+  // ── 기본 필드
+  const [dueDate,setDue]=useState(add14());
+  const [status,setStatus]=useState("consulting");
+  const [manager,setManager]=useState("");
+  const [memo,setMemo]=useState("");
+  const [err,setErr]=useState("");
+
+  // ── 매출 합산 (명단접수 이상)
+  const rosterSt=["roster","producing","shipping","done"];
+  const showAmount=rosterSt.includes(status);
+  const totalQty=uItems.reduce((a,x)=>a+Number(x.qty||0),0);
+  const totalAmount=uItems.reduce((a,x)=>a+Number(x.shopPrice||0)*Number(x.qty||0),0);
+
+  const resolveCustomer=()=>{
+    if(agMode==="existing"){return agencies.find(a=>a.id===agencyId)?.name||"";}
+    if(agMode==="new") return newAg.name.trim();
+    return "";
+  };
+
+  const handleSave=()=>{
+    setErr("");
+    const cust=resolveCustomer();
+    if(!cust){setErr("거래처명을 입력하거나 선택해주세요.");return;}
+    const uniformName=uItems.map(x=>x.uniformName).filter(Boolean).join(", ")||"-";
+    onSave({
+      customer:cust,
+      agencyId:agMode==="existing"?agencyId:"",
+      newAgency:agMode==="new"?newAg:null,
+      contact,uniformName,uniformItems:uItems,
+      qty:totalQty||"",amount:totalAmount||"",
+      designs:selDesigns,
+      dueDate,status,manager,memo,
+    });
+  };
+
+  const tabSt=act=>({padding:"6px 12px",borderRadius:7,fontSize:12,fontWeight:600,cursor:"pointer",border:"none",
+    background:act?"#1d4ed8":"#1e293b",color:act?"#fff":"#94a3b8"});
+  const selSt={...GS.inp,fontSize:13,padding:"8px 10px"};
+
+  return <Modal title="📦 주문 등록" onClose={onClose} wide>
+
+    {/* ── 거래처 ── */}
+    <div style={{marginBottom:14}}>
+      <div style={{fontSize:12,color:"#94a3b8",fontWeight:500,marginBottom:8}}>거래처</div>
+      <div style={{display:"flex",gap:6,marginBottom:10}}>
+        <button style={tabSt(agMode==="existing")} onClick={()=>setAgMode("existing")}>기존 거래처</button>
+        <button style={tabSt(agMode==="new")} onClick={()=>setAgMode("new")}>+ 신규 등록</button>
+      </div>
+      {agMode==="existing"&&(
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+          <MFR label="거래처 선택">
+            <select style={GS.inp} value={agencyId} onChange={e=>setAgId(e.target.value)}>
+              <option value="">— 선택 안 함 —</option>
+              {agencies.map(a=><option key={a.id} value={a.id}>{a.name}{a.agType?` (${a.agType})`:""}</option>)}
+            </select>
+          </MFR>
+          <MFR label="연락처"><input style={GS.inp} value={contact} onChange={e=>setContact(e.target.value)} placeholder="010-0000-0000"/></MFR>
+        </div>
+      )}
+      {agMode==="new"&&(
+        <div style={{background:"#0d1117",borderRadius:8,padding:"12px",border:"1px solid #1e293b"}}>
+          <div style={{fontSize:11,color:"#64748b",marginBottom:8}}>📋 신규 거래처 — 저장 시 거래처 관리에 자동 등록</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+            <MFR label="거래처명 *"><input style={GS.inp} value={newAg.name} onChange={e=>setNewAg(p=>({...p,name:e.target.value}))} placeholder="동호회명"/></MFR>
+            <MFR label="유형">
+              <select style={GS.inp} value={newAg.agType} onChange={e=>setNewAg(p=>({...p,agType:e.target.value}))}>
+                {["대리점","소매점","단체","기타"].map(t=><option key={t}>{t}</option>)}
+              </select>
+            </MFR>
+            <MFR label="연락처"><input style={GS.inp} value={newAg.phone} onChange={e=>setNewAg(p=>({...p,phone:e.target.value}))} placeholder="010-0000-0000"/></MFR>
+            <MFR label="사업자번호"><input style={GS.inp} value={newAg.bizNo||""} onChange={e=>setNewAg(p=>({...p,bizNo:e.target.value}))} placeholder="000-00-00000"/></MFR>
+          </div>
+        </div>
+      )}
     </div>
-    <MFR label="유니폼명"><input style={GS.inp} value={f.uniformName} onChange={e=>s("uniformName",e.target.value)} placeholder="예) y25-01 스카이웨이브"/></MFR>
-    <div style={GS.fGrid}>
-      <MFR label="납기일"><input type="date" style={GS.inp} value={f.dueDate} onChange={e=>s("dueDate",e.target.value)}/></MFR>
-      <MFR label="금액"><input type="number" style={GS.inp} value={f.amount} onChange={e=>s("amount",e.target.value)}/></MFR>
-      <MFR label="담당자"><input style={GS.inp} value={f.manager} onChange={e=>s("manager",e.target.value)}/></MFR>
-      <MFR label="초기 상태"><select style={GS.inp} value={f.status} onChange={e=>s("status",e.target.value)}>{STATUS_FLOW.map(st=><option key={st.key} value={st.key}>{st.label}</option>)}</select></MFR>
+
+    {/* ── 유니폼 항목 (다중) ── */}
+    <div style={{marginBottom:14}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+        <span style={{fontSize:12,color:"#94a3b8",fontWeight:500}}>유니폼 항목</span>
+        <SBtn onClick={addUItem} color="#065f46">+ 항목 추가</SBtn>
+      </div>
+      {uItems.map(it=>(
+        <div key={it.lid} style={{background:"#1e293b",borderRadius:8,border:"1px solid #334155",padding:"10px 12px",marginBottom:8}}>
+          <div style={{display:"flex",gap:8,alignItems:"flex-start",flexWrap:"wrap"}}>
+            <div style={{flex:2,minWidth:140}}>
+              <div style={{fontSize:10,color:"#64748b",marginBottom:3}}>유니폼</div>
+              <select style={selSt} value={it.uniformId} onChange={e=>updateUItem(it.lid,"uniformId",e.target.value)}>
+                <option value="">직접 입력</option>
+                {uniforms.map(u=><option key={u.id} value={u.id}>{u.name}{u.year?` (${u.year})`:""}</option>)}
+              </select>
+              {!it.uniformId&&(<input style={{...selSt,marginTop:4}} value={it.uniformName} onChange={e=>updateUItem(it.lid,"uniformName",e.target.value)} placeholder="유니폼명 직접 입력"/>)}
+            </div>
+            <div style={{flex:1,minWidth:80}}>
+              <div style={{fontSize:10,color:"#64748b",marginBottom:3}}>색상</div>
+              <input style={selSt} value={it.color} onChange={e=>updateUItem(it.lid,"color",e.target.value)} placeholder="예) 레드"/>
+            </div>
+            <div style={{minWidth:80}}>
+              <div style={{fontSize:10,color:"#64748b",marginBottom:3}}>수량</div>
+              <div style={{display:"flex",alignItems:"center",gap:4}}>
+                <button style={{width:28,height:32,background:"#374151",border:"none",color:"white",borderRadius:5,cursor:"pointer",fontSize:16}} onClick={()=>updateUItem(it.lid,"qty",Math.max(1,Number(it.qty)-1))}>−</button>
+                <input type="number" style={{...selSt,width:56,textAlign:"center"}} value={it.qty} min={1} onChange={e=>updateUItem(it.lid,"qty",Number(e.target.value)||"")}/>
+                <button style={{width:28,height:32,background:"#374151",border:"none",color:"white",borderRadius:5,cursor:"pointer",fontSize:16}} onClick={()=>updateUItem(it.lid,"qty",Number(it.qty||0)+1)}>+</button>
+              </div>
+            </div>
+            {it.shopPrice>0&&(
+              <div style={{minWidth:80}}>
+                <div style={{fontSize:10,color:"#64748b",marginBottom:3}}>단체복가</div>
+                <div style={{fontSize:12,color:"#f59e0b",fontWeight:600,paddingTop:8}}>{Number(it.shopPrice).toLocaleString()}원</div>
+              </div>
+            )}
+            {uItems.length>1&&(<button onClick={()=>removeUItem(it.lid)} style={{background:"#7f1d1d",border:"none",color:"white",borderRadius:6,padding:"0 8px",height:32,cursor:"pointer",fontSize:14,alignSelf:"flex-end"}}>✕</button>)}
+          </div>
+        </div>
+      ))}
+      {showAmount&&totalQty>0&&(
+        <div style={{background:"rgba(245,158,11,0.08)",border:"1px solid #f59e0b",borderRadius:8,padding:"10px 14px",display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+          <span style={{fontSize:12,color:"#94a3b8"}}>단체복가 기준 매출 합산</span>
+          <div style={{textAlign:"right"}}>
+            <div style={{fontSize:14,fontWeight:700,color:"#fcd34d"}}>{totalAmount.toLocaleString()}원</div>
+            <div style={{fontSize:10,color:"#64748b"}}>총 {totalQty}벌</div>
+          </div>
+        </div>
+      )}
     </div>
-    <MFR label="메모"><textarea style={{...GS.inp,height:50,resize:"vertical"}} value={f.memo} onChange={e=>s("memo",e.target.value)}/></MFR>
-    <div style={GS.mBtns}><SBtn onClick={()=>{if(!f.customer.trim())return;onSave(f);}} color="#f59e0b" full>등록</SBtn><SBtn onClick={onClose} color="#374151" full>취소</SBtn></div>
+
+    {/* ── 등판 시안 연결 ── */}
+    <div style={{marginBottom:14}}>
+      <div style={{fontSize:12,color:"#94a3b8",fontWeight:500,marginBottom:8}}>
+        등판 시안 연결
+        <span style={{fontSize:10,color:"#475569",marginLeft:6}}>(등판 시안 제작 탭에서 저장된 시안 선택)</span>
+      </div>
+      {saves.length===0
+        ?<div style={{fontSize:11,color:"#475569",padding:"8px 12px",background:"#1e293b",borderRadius:6}}>저장된 시안 없음 — 등판 시안 제작 탭에서 먼저 저장해주세요</div>
+        :(
+          <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
+            {saves.map(sv=>{
+              const sel=selDesigns.some(d=>d.key===sv.key);
+              return(
+                <div key={sv.key} onClick={()=>toggleDesign(sv)}
+                  style={{padding:"6px 10px",borderRadius:7,cursor:"pointer",border:`1px solid ${sel?"#8b5cf6":"#334155"}`,
+                    background:sel?"rgba(139,92,246,0.15)":"#1e293b",fontSize:11,
+                    color:sel?"#c4b5fd":"#94a3b8",userSelect:"none"}}>
+                  {sel?"☑":"☐"} {sv.custName}
+                  {sv.savedAt&&<span style={{fontSize:9,color:"#475569",marginLeft:4}}>{sv.savedAt}</span>}
+                </div>
+              );
+            })}
+          </div>
+        )
+      }
+      {selDesigns.length>0&&(
+        <div style={{marginTop:6,fontSize:11,color:"#c4b5fd"}}>✓ 선택된 시안: {selDesigns.map(d=>d.custName).join(", ")}</div>
+      )}
+    </div>
+
+    {/* ── 진행 상태 ── */}
+    <MFR label="초기 상태">
+      <div style={GS.chips}>
+        {STATUS_FLOW.map(st=>(
+          <div key={st.key} style={{padding:"4px 9px",borderRadius:6,cursor:"pointer",fontSize:11,fontWeight:500,userSelect:"none",
+            background:status===st.key?st.bg:"#1e293b",border:`1px solid ${status===st.key?st.color:"#334155"}`,
+            color:status===st.key?st.color:"#94a3b8"
+          }} onClick={()=>setStatus(st.key)}>{st.label}</div>
+        ))}
+      </div>
+    </MFR>
+
+    {/* ── 납기일/담당자 ── */}
+    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:4}}>
+      <MFR label="납기일"><input type="date" style={GS.inp} value={dueDate} onChange={e=>setDue(e.target.value)}/></MFR>
+      <MFR label="담당자"><input style={GS.inp} value={manager} onChange={e=>setManager(e.target.value)}/></MFR>
+    </div>
+
+    <MFR label="메모"><textarea style={{...GS.inp,height:50,resize:"vertical"}} value={memo} onChange={e=>setMemo(e.target.value)} placeholder="색상 옵션, 특이사항 등"/></MFR>
+
+    {err&&<div style={{color:"#f87171",fontSize:12,marginBottom:8,padding:"6px 10px",background:"rgba(239,68,68,0.1)",borderRadius:6}}>⚠️ {err}</div>}
+
+    <div style={GS.mBtns}>
+      <SBtn onClick={handleSave} color="#f59e0b" full>등록</SBtn>
+      <SBtn onClick={onClose} color="#374151" full>취소</SBtn>
+    </div>
   </Modal>;
 }
 function DetailModal({order,onClose,onUpdate,onPrint}){
