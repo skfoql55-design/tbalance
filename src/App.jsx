@@ -2130,7 +2130,7 @@ function InventoryPage({db}){
 
       <div style={{display:"flex",gap:6,marginBottom:16}}>
         {[["uniform","👕 유니폼"],["equip","🏓 용품"],["history","📋 입출고"],["agency","🏪 대리점"]].map(([k,l])=>(
-          <div key={k} style={{padding:"7px 14px",borderRadius:8,background:tab===k?"#1e293b":"transparent",border:tab===k?"1px solid #3b82f6":"1px solid #334155",color:tab===k?"#f1f5f9":"#64748b",cursor:"pointer",fontSize:12,fontWeight:500}} onClick={()=>setTab(k)}>{l}</div>
+          <div key={k} style={{padding:"7px 14px",borderRadius:8,background:tab===k?"#1e293b":"transparent",border:tab===k?"1px solid #3b82f6":"1px solid #334155",color:tab===k?"#f1f5f9":"#64748b",cursor:"pointer",fontSize:12,fontWeight:500}} onClick={()=>setTabSaved(k)}>{l}</div>
         ))}
       </div>
       {tab==="uniform"&&<>
@@ -2203,7 +2203,7 @@ function InventoryPage({db}){
       {uMod?.mode==="edit"&&<UniformModal initial={uMod.data} onClose={()=>setUM(null)} onSave={d=>{updU({...uMod.data,...d});setUM(null);}}/>}
       {eMod==="add"&&<EquipModal onClose={()=>setEM(null)} onSave={d=>{addE(d);setEM(null);}}/>}
       {agMod&&<AgencyModal onClose={()=>setAM(null)} onSave={d=>{addAg(d);setAM(null);}}/>}
-      {ioMod&&<IOModal modal={ioMod} agencies={agencies} onClose={()=>setIO(null)} onSave={d=>{doIO(d);setIO(null);}}/>}
+      {ioMod&&<IOModal modal={ioMod} agencies={agencies} onClose={()=>setIO(null)} onSave={async d=>{await doIO(d);setIO(null);}}/>}
       {outMod&&<MultiOutModal initItem={outMod} uniforms={uniforms} agencies={agencies}
         onClose={()=>setOM(null)}
         onSave={async d=>{await doMultiOut(d);setOM(null);}}
@@ -3072,8 +3072,13 @@ function CSVImportModal({ modal, uniforms, equips, onClose, onSaveUniforms, onSa
    MODULE 3 — SALES
 ═══════════════════════════════════════════════════════ */
 function SalesPage({db}){
-  const {uSales,eSales,agencies=[],customers=[],templates,sus,ses,toast_,groupOrders,uniforms}=db;
-  const [tab,setTab]=useState("dashboard");
+  const {uSales,eSales,agencies=[],customers=[],invHist=[],templates,sus,ses,toast_,groupOrders,uniforms}=db;
+  const TAB_KEY = "salesPage_tab";
+  const [tab,setTab]=useState(()=>{
+    try{ const t=sessionStorage.getItem(TAB_KEY); return t||"dashboard"; }catch{ return "dashboard"; }
+  });
+  // 탭 변경 시 sessionStorage에 저장
+  const setTabSaved = t => { setTab(t); try{ sessionStorage.setItem(TAB_KEY,t); }catch{} };
   const [addMod,setAdd]=useState(null);
   const [editMod,setEdit]=useState(null);
   const [msgMod,setMsg]=useState(null);
@@ -3094,6 +3099,33 @@ function SalesPage({db}){
     toast_("엑셀 파일 저장!");
   };
 
+  // ── 이전 출고 내역 → 매출로 마이그레이션 ──
+  const migrateOutHistory = async () => {
+    const outHist = invHist.filter(h => h.mode==="out");
+    if(!outHist.length){ toast_("마이그레이션할 출고 내역이 없습니다", false); return; }
+    const existIds = new Set(uSales.map(s=>s.id));
+    const newEntries = outHist
+      .filter(h => !existIds.has("mig_"+h.id))
+      .map(h => ({
+        id: "mig_"+h.id,
+        source: "출고",
+        date: h.date||td(),
+        customer: h.agencyName||"거래처 없음",
+        agencyId: h.agencyId||"",
+        orderType: h.type==="uniform"?"단품판매":"용품판매",
+        itemName: h.itemName||"",
+        sizeKey: h.sizeKey||"",
+        qty: h.qty||0,
+        detail: `${h.itemName||""}${h.sizeKey?" "+h.sizeKey:""} ${h.qty||0}${h.type==="uniform"?"벌":"개"}`,
+        sales: 0, cost: 0, priceType: "", payMethod: "미정",
+        paid: false, tracking: "", memo: h.memo||"",
+        isDelivery: false,
+      }));
+    if(!newEntries.length){ toast_("이미 모두 마이그레이션됨", false); return; }
+    await sus([...newEntries, ...uSales]);
+    toast_(`📥 출고 내역 ${newEntries.length}건 매출 탭으로 가져왔습니다 (금액은 직접 수정해주세요)`);
+  };
+
   return(
     <div>
       <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap",alignItems:"center"}}>
@@ -3101,6 +3133,7 @@ function SalesPage({db}){
         <SBtn onClick={()=>setAdd("equip")} color="#10b981">+ 용품 매출</SBtn>
         <SBtn onClick={()=>setMsg(true)} color="#6366f1">💬 문자 발송</SBtn>
         <SBtn onClick={exportSales} color="#0f766e">📊 엑셀 내보내기</SBtn>
+        {invHist.filter(h=>h.mode==="out").length>0&&uSales.filter(s=>s.id?.startsWith("mig_")).length<invHist.filter(h=>h.mode==="out").length&&<SBtn onClick={migrateOutHistory} color="#7c3aed">📥 출고이력 가져오기</SBtn>}
         <div style={{marginLeft:"auto",display:"flex",gap:8}}>
           <StatBadge label="미수금" val={won(unpaidTotal)} color={unpaidTotal>0?"#ef4444":"#10b981"}/>
         </div>
@@ -3113,7 +3146,7 @@ function SalesPage({db}){
           const upCnt=[...uSales,...eSales].filter(s=>!s.paid).length;
           const counts={dashboard:"",uniform:uCnt>0?` (${uCnt})`:"",equip:eCnt>0?` (${eCnt})`:"",groupsale:gCnt>0?` (${gCnt})`:"",delivery:dCnt>0?` (${dCnt})`:"",unpaid:upCnt>0?` (${upCnt})`:""};
           return [["dashboard","📈 대시보드"],["uniform","👕 유니폼"],["equip","🏓 용품"],["groupsale","🏆 단체복"],["delivery","🚚 직배"],["unpaid","⚠️ 미수금"]].map(([k,l])=>(
-            <div key={k} style={{padding:"7px 14px",borderRadius:8,background:tab===k?"#1e293b":"transparent",border:tab===k?"1px solid #f59e0b":(k==="unpaid"&&upCnt>0?"1px solid #ef4444":"1px solid #334155"),color:tab===k?"#f1f5f9":(k==="unpaid"&&upCnt>0?"#fca5a5":"#64748b"),cursor:"pointer",fontSize:12,fontWeight:500,position:"relative"}} onClick={()=>setTab(k)}>
+            <div key={k} style={{padding:"7px 14px",borderRadius:8,background:tab===k?"#1e293b":"transparent",border:tab===k?"1px solid #f59e0b":(k==="unpaid"&&upCnt>0?"1px solid #ef4444":"1px solid #334155"),color:tab===k?"#f1f5f9":(k==="unpaid"&&upCnt>0?"#fca5a5":"#64748b"),cursor:"pointer",fontSize:12,fontWeight:500,position:"relative"}} onClick={()=>setTabSaved(k)}>
               {l}{counts[k]&&<span style={{fontSize:10,opacity:0.8}}>{counts[k]}</span>}
             </div>
           ));
@@ -3312,51 +3345,99 @@ function SalesDashboard({uSales,eSales,groupOrders}){
   );
 }
 function SalesTable({type,sales,onEdit,onDel,onToggle}){
-  const [yr,setYr]=useState(new Date().getFullYear()); const [mo,setMo]=useState(""); const [q,setQ]=useState("");
+  const curYr = new Date().getFullYear();
+  const [yr,setYr]=useState(curYr);
+  const [mo,setMo]=useState("");
+  const [q,setQ]=useState("");
+
+  const years = useMemo(()=>{
+    const sy = [...new Set(sales.map(s=>s.date?.slice(0,4)).filter(Boolean))].map(Number).sort((a,b)=>b-a);
+    if(!sy.includes(curYr)) sy.unshift(curYr);
+    return sy.length ? sy : [curYr];
+  },[sales]);
+
   const fil=useMemo(()=>sales.filter(s=>{
     const y=s.date?.startsWith(String(yr));
     const m=mo?s.date?.startsWith(`${yr}-${String(mo).padStart(2,"0")}`):y;
-    const sq=!q||(s.customer||"").includes(q)||(s.detail||"").includes(q);
+    const sq=!q||(s.customer||"").includes(q)||(s.detail||"").includes(q)||(s.itemName||"").includes(q);
     return m&&sq;
   }),[sales,yr,mo,q]);
-  const totS=fil.reduce((a,s)=>a+Number(s.sales||0),0),totC=fil.reduce((a,s)=>a+Number(s.cost||0),0);
-  const gc={gridTemplateColumns:"88px 110px 90px 1fr 85px 75px 85px 75px 65px 90px 90px"};
+
+  const totS=fil.reduce((a,s)=>a+Number(s.sales||0),0);
+  const totC=fil.reduce((a,s)=>a+Number(s.cost||0),0);
+  const totQ=fil.reduce((a,s)=>a+Number(s.qty||0),0);
+
+  // 12컬럼: 날짜/거래처/유형/내역/수량/매출/원가/순이익/결제/입금/송장/관리
+  const gc={gridTemplateColumns:"86px 110px 88px 1fr 58px 88px 74px 86px 74px 62px 70px 88px"};
+
   return(
     <div>
       <div style={GS.toolbar}>
-        <select style={GS.sSel} value={yr} onChange={e=>setYr(Number(e.target.value))}>{[2023,2024,2025,2026].map(y=><option key={y} value={y}>{y}년</option>)}</select>
-        <select style={GS.sSel} value={mo} onChange={e=>setMo(e.target.value)}><option value="">전체</option>{MONTHS.map((m,i)=><option key={i+1} value={i+1}>{m}</option>)}</select>
-        <input style={{...GS.sInp,flex:1,maxWidth:200}} placeholder="거래처·내역 검색..." value={q} onChange={e=>setQ(e.target.value)}/>
+        <select style={GS.sSel} value={yr} onChange={e=>setYr(Number(e.target.value))}>
+          {years.map(y=><option key={y} value={y}>{y}년</option>)}
+        </select>
+        <select style={GS.sSel} value={mo} onChange={e=>setMo(e.target.value)}>
+          <option value="">전체</option>
+          {MONTHS.map((m,i)=><option key={i+1} value={i+1}>{m}</option>)}
+        </select>
+        <input style={{...GS.sInp,flex:1,maxWidth:200}} placeholder="거래처·상품명 검색..." value={q} onChange={e=>setQ(e.target.value)}/>
         <SumPill label="매출" val={won(totS)} color="#f59e0b"/>
         <SumPill label="순이익" val={won(totS-totC)} color="#10b981"/>
-        <SumPill label="건수" val={fil.length+"건"} color="#3b82f6"/>
+        <SumPill label={`${fil.length}건`} val={`총 ${totQ}개`} color="#3b82f6"/>
       </div>
-      {fil.length===0?<EmptyState icon="📊" msg="매출 내역 없음"/>:
-        <div style={GS.tbl}>
-          <div style={{...GS.tRow,...gc,background:"#0b0f1a",borderTop:"none",fontSize:10,fontWeight:600,color:"#64748b"}}>
-            <span>날짜</span><span>거래처</span><span>유형</span><span>내역</span><span style={{textAlign:"right"}}>매출</span><span style={{textAlign:"right"}}>원가</span><span style={{textAlign:"right"}}>순이익</span><span style={{textAlign:"center"}}>결제</span><span style={{textAlign:"center"}}>입금</span><span>송장</span><span style={{textAlign:"center"}}>관리</span>
-          </div>
-          {fil.map(s=>{
-            const prof=Number(s.sales||0)-Number(s.cost||0);
-            return <div key={s.id} style={{...GS.tRow,...gc,...(!s.paid?{background:"rgba(239,68,68,0.03)"}:{})}}>
-              <span style={{fontSize:11,color:"#94a3b8"}}>{s.date}</span>
-              <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.customer||"-"}</span>
-              <span style={{fontSize:10}}><span style={{background:"#1d4ed8",color:"white",padding:"1px 5px",borderRadius:3}}>{s.orderType||"-"}</span></span>
-              <span style={{fontSize:11,color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
-  {s.source==="출고"&&<span style={{background:"rgba(16,185,129,0.15)",border:"1px solid #10b981",color:"#6ee7b7",fontSize:9,padding:"1px 5px",borderRadius:3,marginRight:4}}>출고</span>}
-  {s.isDelivery&&<span style={{background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",color:"#fcd34d",fontSize:9,padding:"1px 5px",borderRadius:3,marginRight:4}}>직배</span>}
-  {s.detail||"-"}</span>
-              <span style={{textAlign:"center",fontSize:12,color:"#cbd5e1",fontWeight:600}}>{s.qty||"-"}{s.sizeKey?<span style={{fontSize:10,color:"#64748b",marginLeft:3}}>({s.sizeKey})</span>:null}</span>
-              <span style={{textAlign:"right",fontWeight:600,color:"#f59e0b",fontSize:12}}>{fmt(s.sales)}</span>
-              <span style={{textAlign:"right",color:"#64748b",fontSize:12}}>{fmt(s.cost)}</span>
-              <span style={{textAlign:"right",fontWeight:600,color:prof>=0?"#10b981":"#ef4444",fontSize:12}}>{fmt(prof)}</span>
-              <span style={{textAlign:"center"}}><PayTag method={s.payMethod}/></span>
-              <span style={{textAlign:"center"}}><PaidBtn paid={s.paid} onClick={()=>onToggle(s.id)}/></span>
-              <span style={{fontSize:10,color:"#64748b"}}>{s.tracking||"-"}</span>
-              <div style={{display:"flex",gap:3,justifyContent:"center"}}><MBtn onClick={()=>onEdit(s)}>수정</MBtn><MBtn red onClick={()=>onDel(s.id)}>삭제</MBtn></div>
-            </div>;
-          })}
-        </div>
+      {sales.length===0
+        ? <EmptyState icon="📊" msg="매출 내역 없음" sub="재고 관리에서 출고 처리하면 자동 등록됩니다"/>
+        : fil.length===0
+          ? <EmptyState icon="🔍" msg={`${yr}년 매출 없음`} sub="다른 연도를 선택하거나 검색어를 변경해보세요"/>
+          : <div style={GS.tbl}>
+              {/* 헤더 */}
+              <div style={{...GS.tRow,...gc,background:"#0b0f1a",borderTop:"none",fontSize:10,fontWeight:600,color:"#64748b"}}>
+                <span>날짜</span>
+                <span>거래처</span>
+                <span>유형</span>
+                <span>내역</span>
+                <span style={{textAlign:"center"}}>수량</span>
+                <span style={{textAlign:"right"}}>매출</span>
+                <span style={{textAlign:"right"}}>원가</span>
+                <span style={{textAlign:"right"}}>순이익</span>
+                <span style={{textAlign:"center"}}>결제</span>
+                <span style={{textAlign:"center"}}>입금</span>
+                <span>송장</span>
+                <span style={{textAlign:"center"}}>관리</span>
+              </div>
+              {/* 데이터 행 */}
+              {fil.map(s=>{
+                const prof=Number(s.sales||0)-Number(s.cost||0);
+                return <div key={s.id} style={{...GS.tRow,...gc,...(!s.paid?{background:"rgba(239,68,68,0.03)"}:{})}}>
+                  <span style={{fontSize:11,color:"#94a3b8"}}>{s.date||"-"}</span>
+                  <span style={{fontWeight:500,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",fontSize:12}}>{s.customer||"-"}</span>
+                  <span style={{fontSize:10}}>
+                    <span style={{background:"#1d4ed8",color:"white",padding:"1px 5px",borderRadius:3,whiteSpace:"nowrap"}}>
+                      {s.orderType||"-"}
+                    </span>
+                  </span>
+                  <span style={{fontSize:11,color:"#94a3b8",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                    {s.source==="출고"&&<span style={{background:"rgba(16,185,129,0.15)",border:"1px solid #10b981",color:"#6ee7b7",fontSize:9,padding:"1px 5px",borderRadius:3,marginRight:4}}>출고</span>}
+                    {s.isDelivery&&<span style={{background:"rgba(245,158,11,0.15)",border:"1px solid #f59e0b",color:"#fcd34d",fontSize:9,padding:"1px 5px",borderRadius:3,marginRight:4}}>직배</span>}
+                    {s.detail||s.itemName||"-"}
+                  </span>
+                  <span style={{textAlign:"center",fontSize:12,color:"#cbd5e1",fontWeight:600}}>
+                    {s.qty||"-"}
+                    {s.sizeKey&&<span style={{fontSize:9,color:"#64748b",display:"block"}}>{s.sizeKey}</span>}
+                  </span>
+                  <span style={{textAlign:"right",fontWeight:600,color:"#f59e0b",fontSize:12}}>{fmt(s.sales)}</span>
+                  <span style={{textAlign:"right",color:"#64748b",fontSize:12}}>{fmt(s.cost)}</span>
+                  <span style={{textAlign:"right",fontWeight:600,color:prof>=0?"#10b981":"#ef4444",fontSize:12}}>{fmt(prof)}</span>
+                  <span style={{textAlign:"center"}}><PayTag method={s.payMethod}/></span>
+                  <span style={{textAlign:"center"}}><PaidBtn paid={s.paid} onClick={()=>onToggle(s.id)}/></span>
+                  <span style={{fontSize:10,color:"#64748b",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{s.tracking||"-"}</span>
+                  <div style={{display:"flex",gap:3,justifyContent:"center"}}>
+                    <MBtn onClick={()=>onEdit(s)}>수정</MBtn>
+                    <MBtn red onClick={()=>onDel(s.id)}>삭제</MBtn>
+                  </div>
+                </div>;
+              })}
+            </div>
       }
     </div>
   );
