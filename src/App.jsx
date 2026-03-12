@@ -705,28 +705,42 @@ function DesignTool() {
       if(lib?.length) setLib(lib);
     }catch(e){ console.error("라이브러리 로드 실패",e); }
     finally{ libLoadedRef.current=true; }
-    // ── 커스텀 폰트 복원: IndexedDB 우선(빠름/CORS없음), 없으면 Firebase URL fallback
+    // ── 커스텀 폰트 복원
+    // 전략: IndexedDB(같은기기 캐시) → Firebase URL 직접 로드(다른기기)
+    // fetch()는 Firebase Storage에서 CORS 차단되므로 URL 방식 FontFace 사용
     try{
       const saved = await ld("ds:__fonts",[]);
       if(saved?.length){
         const loaded=[];
         for(const f of saved){
           try{
-            // 1) IndexedDB 캐시에서 ArrayBuffer 읽기
-            let buf = await idbGet("font:"+f.name);
-            // 2) 없으면 Firebase Storage URL로 fetch (다른 컴퓨터)
-            if(!buf && f.url){
-              try{
-                const res = await fetch(f.url);
-                buf = await res.arrayBuffer();
-                await idbSet("font:"+f.name, buf); // 로컬에 캐시
-              }catch(fe){ console.warn("폰트 URL fetch 실패:",f.name,fe); }
+            // 1) 같은 기기: IndexedDB ArrayBuffer로 로드 (빠름, CORS 없음)
+            const buf = await idbGet("font:"+f.name).catch(()=>null);
+            if(buf){
+              const ff = new FontFace(f.name, buf, {weight:f.weight||"400"});
+              await ff.load();
+              document.fonts.add(ff);
+              loaded.push(f);
+              continue;
             }
-            if(!buf) continue;
-            const ff = new FontFace(f.name, buf, {weight:f.weight||"400"});
-            await ff.load();
-            document.fonts.add(ff);
-            loaded.push(f);
+            // 2) 다른 기기: Firebase URL로 FontFace 직접 로드
+            //    fetch()+ArrayBuffer 대신 url() 방식 사용 → CORS 차단 없음
+            if(f.url){
+              try{
+                const ff = new FontFace(f.name, `url(${f.url})`, {weight:f.weight||"400"});
+                await ff.load();
+                document.fonts.add(ff);
+                // 이후 빠른 로드를 위해 IndexedDB에 캐시 (background)
+                try{
+                  const res = await fetch(f.url, {mode:"cors"});
+                  if(res.ok){
+                    const ab = await res.arrayBuffer();
+                    await idbSet("font:"+f.name, ab);
+                  }
+                }catch(_){} // 캐시 실패해도 폰트는 이미 로드됨
+                loaded.push(f);
+              }catch(fe){ console.warn("폰트 URL 로드 실패:",f.name,fe); }
+            }
           }catch(e){ console.warn("폰트 복원 실패:",f.name,e); }
         }
         if(loaded.length) setFonts(p=>[...BUILTIN_FONTS,...loaded]);
@@ -768,11 +782,12 @@ function DesignTool() {
   // ── selIds → selIdsRef 동기화
   useEffect(()=>{ selIdsRef.current = selIds; },[selIds]);
 
-  // ── fonts 변경될 때마다 Firestore에 자동 저장 (BUILTIN 제외, URL 있는 것만)
+  // ── fonts 변경될 때마다 Firestore에 자동 저장 (BUILTIN 제외)
   useEffect(()=>{
     if(!fontLoadedRef.current) return;
     const builtinNames = new Set(BUILTIN_FONTS.map(f=>f.name));
-    const toSave = fonts.filter(f=>!builtinNames.has(f.name) && f.url);
+    // url 없는 폰트도 name 기록 (Firebase 업로드 실패해도 목록 유지)
+    const toSave = fonts.filter(f=>!builtinNames.has(f.name));
     sv("ds:__fonts", toSave).catch(console.error);
   },[fonts]);
 
@@ -3104,26 +3119,63 @@ function SalesPage({db}){
     const outHist = invHist.filter(h => h.mode==="out");
     if(!outHist.length){ toast_("마이그레이션할 출고 내역이 없습니다", false); return; }
     const existIds = new Set(uSales.map(s=>s.id));
+
+    // ── 거래처 유형 → 단가 필드 자동 선택 ──
+    // 대리점 → agencyPrice, 동호회/학교/기관/단체 → shopPrice, 개인/지인 → friendPrice, 나머지 → shopPrice
+    const AG_PRICE_MAP = {
+      "대리점":   "agencyPrice",
+      "소매점":   "agencyPrice",
+      "동호회":   "shopPrice",
+      "학교/기관":"shopPrice",
+      "단체":     "shopPrice",
+      "개인":     "friendPrice",
+      "기타":     "shopPrice",
+    };
+    const PRICE_LABEL_MAP = {
+      "agencyPrice":"대리점가","shopPrice":"단체복가",
+      "netPrice":"인터넷최저가","friendPrice":"도매가",
+    };
+
     const newEntries = outHist
       .filter(h => !existIds.has("mig_"+h.id))
-      .map(h => ({
-        id: "mig_"+h.id,
-        source: "출고",
-        date: h.date||td(),
-        customer: h.agencyName||"거래처 없음",
-        agencyId: h.agencyId||"",
-        orderType: h.type==="uniform"?"단품판매":"용품판매",
-        itemName: h.itemName||"",
-        sizeKey: h.sizeKey||"",
-        qty: h.qty||0,
-        detail: `${h.itemName||""}${h.sizeKey?" "+h.sizeKey:""} ${h.qty||0}${h.type==="uniform"?"벌":"개"}`,
-        sales: 0, cost: 0, priceType: "", payMethod: "미정",
-        paid: false, tracking: "", memo: h.memo||"",
-        isDelivery: false,
-      }));
+      .map(h => {
+        // 재고에서 유니폼 정보 조회
+        const uItem = uniforms.find(u => u.id===h.itemId || u.name===h.itemName);
+        // 거래처 정보로 agType 조회
+        const ag = agencies.find(a => a.id===h.agencyId);
+        const agType = ag?.agType || ag?.type || "";
+        // agType에 따라 단가 필드 결정
+        const priceKey = AG_PRICE_MAP[agType] || "shopPrice";
+        const priceLabel = PRICE_LABEL_MAP[priceKey] || "단체복가";
+        const n = Number(h.qty||0);
+        const unitSale = uItem ? Number(uItem[priceKey]||0) : 0;
+        const unitCost = uItem ? Number(uItem.costPrice||0) : 0;
+
+        return {
+          id: "mig_"+h.id,
+          source: "출고",
+          date: h.date||td(),
+          customer: h.agencyName||"거래처 없음",
+          agencyId: h.agencyId||"",
+          orderType: h.type==="uniform"?"단품판매":"용품판매",
+          itemName: h.itemName||"",
+          sizeKey: h.sizeKey||"",
+          qty: n,
+          detail: `${h.itemName||""}${h.sizeKey?" "+h.sizeKey:""} ${n}${h.type==="uniform"?"벌":"개"}`,
+          sales: unitSale * n,
+          cost:  unitCost * n,
+          priceType: unitSale>0 ? priceLabel : "",
+          payMethod: "미정",
+          paid: false, tracking: "", memo: h.memo||"",
+          isDelivery: false,
+        };
+      });
+
     if(!newEntries.length){ toast_("이미 모두 마이그레이션됨", false); return; }
+
+    const withPrice = newEntries.filter(e=>e.sales>0).length;
     await sus([...newEntries, ...uSales]);
-    toast_(`📥 출고 내역 ${newEntries.length}건 매출 탭으로 가져왔습니다 (금액은 직접 수정해주세요)`);
+    toast_(`📥 출고이력 ${newEntries.length}건 가져오기 완료${withPrice>0?" · "+withPrice+"건 금액 자동 계산":""}`);
   };
 
   return(
